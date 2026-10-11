@@ -24,6 +24,12 @@ Use a desktop Chrome, Edge or Firefox with hardware acceleration turned on. All 
 
 The game is served inside the app from `https://localhost`. The app uses a lighter asset set: 1K HDR sky, textures at 1024 px or smaller, and props at 512 px. It always starts in the Mobile quality preset with touch controls.
 
+## Windows app
+`SWAT-Urban-Siege.exe` (Windows 10/11 x64) is distributed separately. It is a single file: a Neutralinojs wrapper with all game files embedded, served from its own built-in local web server. Double-click it to run. It needs no install, but it does need the Microsoft Edge WebView2 runtime, which comes with Windows 10/11. It starts fullscreen at Medium quality, which you can change in Settings. F11 toggles fullscreen, and EXIT TO DESKTOP on the menu or the pause screen closes it. It uses a lighter sky and ground textures (1K HDR, textures 1024 px or smaller) to stay small. The exe is not code-signed, so SmartScreen may ask you to confirm the first time ("More info" → "Run anyway").
+
+## Hosting on GitHub Pages
+This folder can be published as-is (all paths are relative; `.nojekyll` is included).
+
 ## Controls
 | Key | Action |
 |---|---|
