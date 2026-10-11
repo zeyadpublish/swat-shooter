@@ -6,9 +6,46 @@ export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const makeCode = () => Array.from({ length: 5 }, () => CODE_CHARS[(Math.random() * CODE_CHARS.length) | 0]).join('');
 export const cleanCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
 
-function peerOptions() {
-  const q = new URLSearchParams(location.search), o = { debug: 0, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] } };
-  if (q.get('peerhost')) { o.host = q.get('peerhost'); o.port = +(q.get('peerport') || 9000); o.path = q.get('peerpath') || '/'; o.secure = q.get('peersecure') === '1'; o.key = q.get('peerkey') || 'peerjs'; }
+// ICE / TURN configuration (for players behind strict NATs). Sources, later ones win:
+//  1. defaults: Google public STUN
+//  2. netconfig.json next to index.html (optional): { "iceServers": [...], "iceTransportPolicy": "all"|"relay",
+//     "credentialsUrl": "https://.../turn-credentials" (must return { iceServers: [...] } or [...]), "peer": { host, port, path, secure, key } }
+//     Works with Metered (its credentials API URL) or a small Cloudflare Worker that mints Cloudflare TURN credentials.
+//  3. localStorage 'swat-netconfig' (same JSON; handy for testing on a phone)
+//  4. URL: ?turn=turn:host:3478&turnuser=U&turnpass=P (repeatable turn=), ?ice=<URL-encoded JSON array>, ?icerelay=1,
+//     ?peerhost=&peerport=&peerpath=&peersecure=1&peerkey=
+export const DEFAULT_ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+let netCfgP = null;
+export function loadNetConfig() {
+  if (netCfgP) return netCfgP;
+  return (netCfgP = (async () => {
+    const cfg = { iceServers: DEFAULT_ICE.slice(), iceTransportPolicy: 'all', peer: null, source: ['default'] };
+    const merge = (c, src) => {
+      if (!c || typeof c !== 'object') return;
+      if (Array.isArray(c.iceServers) && c.iceServers.length) cfg.iceServers = c.extendDefaults ? DEFAULT_ICE.concat(c.iceServers) : c.iceServers;
+      if (c.iceTransportPolicy === 'relay' || c.iceTransportPolicy === 'all') cfg.iceTransportPolicy = c.iceTransportPolicy;
+      if (c.peer && c.peer.host) cfg.peer = c.peer;
+      if (c.credentialsUrl) cfg.credentialsUrl = c.credentialsUrl;
+      cfg.source.push(src);
+    };
+    try { const r = await fetch('netconfig.json', { cache: 'no-store' }); if (r.ok) merge(await r.json(), 'netconfig.json'); } catch (e) {}
+    try { merge(JSON.parse(localStorage.getItem('swat-netconfig') || 'null'), 'localStorage'); } catch (e) {}
+    const q = new URLSearchParams(location.search);
+    try { if (q.get('ice')) merge({ iceServers: JSON.parse(q.get('ice')) }, 'url'); } catch (e) { console.warn('bad ?ice= JSON'); }
+    const turns = q.getAll('turn').filter(u => /^turns?:/.test(u));
+    if (turns.length) merge({ iceServers: turns.map(u => ({ urls: u, username: q.get('turnuser') || undefined, credential: q.get('turnpass') || undefined })), extendDefaults: true }, 'url');
+    if (q.get('icerelay') === '1') cfg.iceTransportPolicy = 'relay';
+    if (q.get('peerhost')) cfg.peer = { host: q.get('peerhost'), port: +(q.get('peerport') || 9000), path: q.get('peerpath') || '/', secure: q.get('peersecure') === '1', key: q.get('peerkey') || 'peerjs' };
+    if (cfg.credentialsUrl) { // short-lived TURN credentials from a provider endpoint
+      try { const r = await timeout(fetch(cfg.credentialsUrl, { cache: 'no-store' }), 6000, 'timeout'); const j = await r.json(); const list = Array.isArray(j) ? j : j.iceServers; if (Array.isArray(list) && list.length) { cfg.iceServers = DEFAULT_ICE.concat(list); cfg.source.push('credentialsUrl'); } } catch (e) { console.warn('TURN credentials fetch failed', e); }
+    }
+    window.__netcfg = cfg; return cfg;
+  })());
+}
+async function peerOptions() {
+  const c = await loadNetConfig();
+  const o = { debug: 0, config: { iceServers: c.iceServers, iceTransportPolicy: c.iceTransportPolicy } };
+  if (c.peer) Object.assign(o, { host: c.peer.host, port: +(c.peer.port || 443), path: c.peer.path || '/', secure: c.peer.secure !== false && c.peer.secure !== '0', key: c.peer.key || 'peerjs' });
   return o;
 }
 async function loadPeer() {
@@ -37,7 +74,7 @@ export class Net {
     for (let attempt = 0; attempt < 5; attempt++) {
       const code = makeCode();
       try {
-        const peer = new Peer(PREFIX + code, peerOptions());
+        const peer = new Peer(PREFIX + code, await peerOptions());
         await timeout(new Promise((res, rej) => { peer.once('open', res); peer.once('error', rej); }), 12000, 'The matchmaking server did not answer.');
         this.peer = peer; this.code = code; this.wire(); return code;
       } catch (e) { if (!(e && e.type === 'unavailable-id')) throw e; }
@@ -46,7 +83,7 @@ export class Net {
   }
   async join(code) {
     const Peer = await loadPeer(); this.isHost = false; this.code = code;
-    const peer = this.peer = new Peer(peerOptions());
+    const peer = this.peer = new Peer(await peerOptions());
     await timeout(new Promise((res, rej) => { peer.once('open', res); peer.once('error', rej); }), 12000, 'The matchmaking server did not answer.');
     const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
     await timeout(new Promise((res, rej) => { conn.once('open', res); peer.once('error', rej); conn.once('error', rej); }), 15000, 'Could not connect to the host (room closed or network blocked).');
@@ -115,4 +152,11 @@ function relayPeerClass(url) {
     reconnect() {}
     destroy() { this.destroyed = true; for (const c of [...this.conns.values()]) c.close(); try { this.ws.close(); } catch (e) {} }
   };
+}
+
+// Offline room (bot matches without a network): same interface as Net, nothing is sent anywhere.
+export class LocalNet {
+  constructor() { this.peer = null; this.conns = new Map(); this.isHost = true; this.local = true; this.code = 'LOCAL'; }
+  async host() { return 'LOCAL'; }
+  broadcast() {} send() {} kick() {} checkTimeouts() {} close() {}
 }

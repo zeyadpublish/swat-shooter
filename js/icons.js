@@ -26,6 +26,8 @@ export const ICONS = {
   users: S(`<circle cx="9" cy="8" r="3.4" fill="currentColor"/><path d="M2.5 20c.4-4 3-6 6.5-6s6.1 2 6.5 6z" fill="currentColor"/><circle cx="17" cy="9" r="2.6" fill="currentColor" opacity=".7"/><path d="M15.5 13.6c3.2-.4 5.7 1.4 6 5.4h-4.6" fill="currentColor" opacity=".7"/>`),
   list: S(`<path d="M8 6.5h12M8 12h12M8 17.5h12" ${st} stroke-width="2.4"/><circle cx="4" cy="6.5" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="17.5" r="1.5" fill="currentColor"/>`),
   chat: S(`<path d="M4 5.5h16v10H10l-4.5 3.8V15.5H4z" ${st} stroke-width="2.2" stroke-linejoin="round"/><path d="M8 9.5h8M8 12.5h5" ${st} stroke-width="1.8"/>`),
+  // armoured vehicle (enter / exit)
+  car: S(`<path fill="currentColor" d="M5.2 9.2l1.9-4.1c.3-.6.9-1 1.6-1h6.6c.7 0 1.3.4 1.6 1l1.9 4.1H21a1 1 0 0 1 1 1v6.3a1 1 0 0 1-1 1h-1.3a2.7 2.7 0 0 1-5.3 0H9.6a2.7 2.7 0 0 1-5.3 0H3a1 1 0 0 1-1-1v-6.3a1 1 0 0 1 1-1zm2.3 0h9l-1.4-3.2H8.9z"/><circle cx="7" cy="17.5" r="1.4" fill="#000" opacity=".45"/><circle cx="17" cy="17.5" r="1.4" fill="#000" opacity=".45"/>`),
   chevron: S(`<path d="M7 14.5l5-5 5 5" ${st} stroke-width="2.6"/>`),
 };
 export const icon = (name, cls = '') => `<i class="ico ${cls}">${ICONS[name]}</i>`;

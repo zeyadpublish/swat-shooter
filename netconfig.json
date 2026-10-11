@@ -1,0 +1,4 @@
+{
+  "_comment": "Multiplayer network settings. Empty = public PeerJS broker + Google STUN only. See netconfig.example.json and README (Multiplayer > TURN) to add a TURN server.",
+  "iceServers": []
+}

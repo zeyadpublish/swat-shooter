@@ -450,3 +450,44 @@ body.mp.mobile .mponly { display: flex !important; }
 #banner small { font-family: var(--font); font-weight: 700; }
 #killfeed .blue { color: #8cc6ff; } #killfeed .red { color: #ff8f80; } #killfeed .ffa { color: #ffd59a; }
 body.pvp #chips .chip:nth-child(-n+2) { display: none; }
+
+/* ---------- v1.4 vehicles ---------- */
+#tUse { display: none; right: calc(214px * var(--ts, 1) + var(--sar)); bottom: calc(128px * var(--ts, 1) + var(--sab)); width: calc(62px * var(--ts, 1)); height: calc(62px * var(--ts, 1));
+  border-color: rgba(242,163,58,.85); box-shadow: 0 0 14px rgba(242,163,58,.45), inset 0 1px 0 rgba(255,255,255,.18); }
+body.cannear #tUse, body.driving #tUse { display: flex; }
+body.cannear #tUse { animation: usepulse 1.1s ease-in-out infinite alternate; }
+@keyframes usepulse { to { box-shadow: 0 0 26px rgba(242,163,58,.85), inset 0 0 10px rgba(242,163,58,.35); } }
+body.driving #tUse { right: calc(34px * var(--ts, 1) + var(--sar)); bottom: calc(150px * var(--ts, 1) + var(--sab)); }
+body.driving #tFire, body.driving #tFireL, body.driving #tAim, body.driving #tReload, body.driving #tJump, body.driving #tCrouch, body.driving #tSprint, body.driving #tSwap,
+body.driving #crosshair, body.driving #ammobox, body.driving #hitmarker { display: none !important; }
+#vehbox { position: absolute; right: calc(30px + var(--sar)); bottom: calc(28px + var(--sab)); min-width: 250px; padding: 10px 16px 12px; border-radius: 10px;
+  background: var(--glass); border: 1px solid var(--glass-b); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); transform: scale(var(--hs)); transform-origin: right bottom; }
+#vehbox .vn { font-size: 11px; letter-spacing: .22em; font-weight: 700; color: var(--accent); }
+#vehbox .vs { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 6px; }
+#vehbox .vs b { font-size: 40px; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
+#vehbox .vs small { font-size: 11px; letter-spacing: .18em; opacity: .7; }
+#vehbox .vh { height: 7px; border-radius: 4px; background: rgba(255,255,255,.12); overflow: hidden; }
+#vehbox .vh i { display: block; height: 100%; background: linear-gradient(90deg, #8fd36a, #d8f2a0); transition: width .2s; }
+#vehbox .vh i.low { background: linear-gradient(90deg, #d0281c, #ff7a6e); }
+#useprompt { position: absolute; left: 50%; top: 61%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; font-size: 12px; letter-spacing: .18em; font-weight: 700;
+  background: rgba(10,13,17,.62); border: 1px solid rgba(242,163,58,.6); color: #fff; white-space: nowrap; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+body.mobile #useprompt { display: none; }
+#vehbox .vk { float: right; font-size: 10px; letter-spacing: .14em; color: rgba(255,255,255,.55); margin-left: 14px; }
+/* v1.4 lobby bot rows */
+.lp.bot { padding: 6px 12px; font-size: 15px; background: rgba(14,18,23,.55); border-style: dashed; border-left-style: solid; }
+.lteam.blue .lp.bot { border-left-color: var(--blue); } .lteam.red .lp.bot { border-left-color: var(--redt); }
+.lp .ai { display: inline-block; font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .12em; padding: 1px 5px; margin-right: 8px; border-radius: 3px; background: rgba(255,255,255,.14); color: #cfd6de; vertical-align: 2px; }
+body.mobile .lp.bot { padding: 3px 10px; font-size: 13px; }
+/* v1.4 polish: three equal mode cards, compact two-column lobby options on short screens */
+.mpcards { grid-template-columns: repeat(3, 1fr); }
+.card .wide { margin-top: auto; }
+.card:last-child { border-color: rgba(242,163,58,.35); background: linear-gradient(160deg, rgba(242,163,58,.10), rgba(14,18,23,.72) 55%); }
+@media (max-height: 500px) { .card h3 { font-size: 20px; } .card p { font-size: 11px; line-height: 1.25; } }
+@media (max-height: 640px) {
+  .lobbyside { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; align-content: start; }
+  .lobbyside label { font-size: 9px; letter-spacing: .16em; gap: 2px; }
+  .lobbyside select { padding: 4px 6px; font-size: 13px; }
+  .lobbyside #lobbyInfo, .lobbyside .wide { grid-column: 1 / -1; }
+  .lobbyside #lobbyInfo { font-size: 11px; }
+  .lobbyside .wide { padding-top: 8px; padding-bottom: 8px; }
+}

@@ -73,6 +73,25 @@ export class Sfx {
     if (kind === 'shotgun' && !pos) { this.click(900, 0.5, 0.33); this.click(1400, 0.55, 0.42); this.click(700, 0.45, 0.5); } // pump: back - forward
     if (kind === 'sniper' && !pos) { this.click(2200, 0.5, 0.45); this.click(1300, 0.45, 0.6); this.click(2800, 0.55, 0.78); this.click(1700, 0.5, 0.9); } // bolt
   }
+  explosion(pos) {
+    if (!this.ctx) return; const t = this.ctx.currentTime, o = this.out(pos); o.gain.value = 2.2;
+    this.noiseBurst(o, t, { type: 'lowpass', freq: 420, q: 0.6, gain: 1.4, decay: 1.6 });
+    this.noiseBurst(o, t, { type: 'bandpass', freq: 1400, q: 0.5, gain: 0.8, decay: 0.35 });
+    this.noiseBurst(o, t + 0.04, { type: 'lowpass', freq: 160, q: 0.8, gain: 1.2, decay: 2.4 });
+    this.tone(o, t, 70, 28, 0.9, 1.0);
+  }
+  // looping engine for the local driver: set(load 0..1, throttle 0..1)
+  engineLoop() {
+    const ctx = this.ctx, t = ctx.currentTime, out = ctx.createGain(); out.gain.value = 0; out.connect(this.fxBus);
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(); o1.type = 'sawtooth'; o2.type = 'square';
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420; f.Q.value = 2;
+    const g2 = ctx.createGain(); g2.gain.value = 0.35; o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(out);
+    o1.frequency.value = 38; o2.frequency.value = 19; o1.start(t); o2.start(t); out.gain.linearRampToValueAtTime(0.16, t + 0.4);
+    return {
+      set: (load, th) => { const n = ctx.currentTime, hz = 34 + load * 70 + th * 10; o1.frequency.setTargetAtTime(hz, n, 0.12); o2.frequency.setTargetAtTime(hz / 2, n, 0.12); f.frequency.setTargetAtTime(380 + load * 900 + th * 400, n, 0.1); out.gain.setTargetAtTime(0.12 + th * 0.08 + load * 0.05, n, 0.15); },
+      stop: () => { const n = ctx.currentTime; out.gain.setTargetAtTime(0, n, 0.08); o1.stop(n + 0.5); o2.stop(n + 0.5); },
+    };
+  }
   switchWeapon() { this.click(1500, 0.35); this.click(2600, 0.4, 0.26); this.click(900, 0.35, 0.32); }
   pickup() { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(); this.tone(o, t, 660, 660, 0.08, 0.18, 'triangle'); this.tone(o, t + 0.08, 990, 990, 0.14, 0.18, 'triangle'); this.click(1800, 0.4, 0.02); }
   click(freq = 3000, gain = 0.3, when = 0, pos = null) { if (!this.ctx) return; const o = this.out(pos); this.noiseBurst(o, this.ctx.currentTime + when, { type: 'bandpass', freq, q: 4, gain, decay: 0.035 }); }

@@ -10,8 +10,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { World, analyzeHDR } from './world.js';
 import { raycastBoxes } from './physics.js';
-import { CharacterFactory } from './character.js';
+import { CharacterFactory, ENEMY_LOOKS, enemyLook } from './character.js';
 import { FX } from './fx.js';
+import { Vehicles } from './vehicle.js';
 import { Sfx } from './audio.js';
 import { Player, fwdVec, rightVec } from './player.js';
 import { Enemy } from './enemy.js';
@@ -118,7 +119,7 @@ class HUD {
   // kill feed line: killer, weapon icon, headshot icon, victim (killer/victim are pre-escaped HTML)
   feed(killer, wid, head, victim, pts) {
     const w = WEAPON_BY_ID[wid], d = document.createElement('div');
-    d.innerHTML = `${killer}${w ? `<img src="${w.thumb}" alt="${w.name}" title="${w.name}">` : icon('skull')}${head ? icon('headshot') : ''}${victim}${pts ? `<span class="pts">+${pts}</span>` : ''}`;
+    d.innerHTML = `${killer}${w ? `<img src="${w.thumb}" alt="${w.name}" title="${w.name}">` : wid === 'vehicle' ? icon('car', 'veh') : icon('skull')}${head ? icon('headshot') : ''}${victim}${pts ? `<span class="pts">+${pts}</span>` : ''}`;
     $('killfeed').prepend(d); (this.feedItems = this.feedItems || []).push({ d, t: 0 });
     while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
   }
@@ -243,7 +244,7 @@ class Game {
     this.settings = Object.assign({ quality: MOBILE ? 'mobile' : 'high', res: 'native', sens: 1, adsSens: 1, fov: 72, vol: 0.8, fxVol: 1, uiVol: 0.8, invert: false, fps: false, hand: 'right', btnOp: 0.85, haptics: true,
       name: 'Operator-' + (100 + Math.random() * 900 | 0), dmgNum: false, xp: true, xhair: '#ffffff', allWeapons: false, layout: {}, primary: 'm4a1', secondary: 'pistol' }, saved);
     const st = this.settings; st.name = cleanName(st.name) || 'Operator';
-    if (!PRIMARIES.includes(st.primary)) st.primary = 'm4a1'; if (!SECONDARIES.includes(st.secondary) || st.secondary === st.primary) st.secondary = st.primary === 'pistol' ? 'mac10' : 'pistol';
+    if (!PRIMARIES.includes(st.primary)) st.primary = 'm4a1'; if (!SECONDARIES.includes(st.secondary) || st.secondary === st.primary) st.secondary = 'pistol';
     if (!localStorage.getItem('swat-settings')) localStorage.setItem('swat-settings', JSON.stringify(st));
     if (params.get('quality')) this.settings.quality = params.get('quality');
     if (params.get('res')) this.settings.res = params.get('res');
@@ -269,11 +270,13 @@ class Game {
     const glLoader = new GLTFLoader(mgr); glLoader.setMeshoptDecoder(MeshoptDecoder);
     const gltfP = glLoader.loadAsync(asset('assets/swat.glb'), (e) => { if (e.total) $('loadtxt').textContent = `Loading operator ${(e.loaded / e.total * 100) | 0}%`; });
     const gunP = Promise.all(WEAPONS.map(w => glLoader.loadAsync(asset(w.file))));
+    const RIGS = ['q_swat', 'q_adv', 'q_worker', 'q_hoodie', 'q_punk', 'q_casual'];
+    const rigP = Promise.all(RIGS.map(n => glLoader.loadAsync(asset('assets/chars/' + n + '.glb'))));
     const hdrP = new RGBELoader(mgr).loadAsync(asset('assets/hdr/kloofendal_48d_partly_cloudy_puresky.hdr'));
     const cityLoader = new GLTFLoader(mgr); cityLoader.setMeshoptDecoder(MeshoptDecoder);
     await this.world.loadCity(cityLoader);
     this.world.build({ lite: this.lite });
-    const [gltf, hdr, gun] = await Promise.all([gltfP, hdrP, gunP]);
+    const [gltf, hdr, gun, rigs] = await Promise.all([gltfP, hdrP, gunP, rigP]);
     // lighting from HDR
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const info = analyzeHDR(hdr);
@@ -288,13 +291,15 @@ class Game {
     this.scene.add(new THREE.HemisphereLight(0xbcd0e6, 0x3a332c, 0.35));
     // characters
     const gunScenes = {}; WEAPONS.forEach((w, i) => gunScenes[w.id] = gun[i].scene);
-    this.factory = new CharacterFactory(gltf, gunScenes, WEAPON_BY_ID);
+    const extra = {}; RIGS.forEach((n, i) => extra[n] = rigs[i]);
+    this.factory = new CharacterFactory(gltf, gunScenes, WEAPON_BY_ID, extra);
     window.__gunCal = this.factory.debug;
-    this.fx = new FX(this.scene);
+    this.fx = new FX(this.scene); this.fx.cam = this.camera;
     for (const s of this.fx.shells) s.onBounce = (p) => this.sfx.shellTink(p);
     const pc = this.factory.create({ isPlayer: true }); this.scene.add(pc.root);
     this.player = new Player(this, pc);
     this.pickups = new Pickups(this); this.hud.weaponChanged(); this.hud.applyCrosshair();
+    this.vehicles = new Vehicles(this);
     this.ui.progress(0.95, 'Preparing the city…');
     this.setupPost(); this.applySettings();
     this.mp = new MP(this);
@@ -386,6 +391,7 @@ class Game {
       this.input.keys[e.code] = true;
       if (e.code === 'Space') { this.input.jumpPressed = true; e.preventDefault(); }
       if (e.code === 'KeyR') this.input.reloadPressed = true;
+      if (e.code === 'KeyE' && !e.repeat) this.input.usePressed = true;
       if (e.code === 'KeyC' && !e.repeat) this.player.crouchToggle = !this.player.crouchToggle;
       if (e.code === 'KeyV' && !e.repeat) this.shoulder *= -1;
       if (e.code === 'KeyQ' && !e.repeat) this.player.lastWeapon();
@@ -419,6 +425,7 @@ class Game {
   }
   haptic(p) { if (this.mobile && this.settings.haptics && !this.testMode && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) {} } }
   look(dx, dy) {
+    if (Math.abs(dx) + Math.abs(dy) > 0.5) this.lastLook = this.time;
     const p = this.player, k = 0.0022 * this.settings.sens * (p.aiming ? (p.weapon.scope ? 0.22 : 0.6) * (this.settings.adsSens || 1) : 1);
     this.player.yaw -= dx * k; this.player.pitch -= dy * k * (this.settings.invert ? -1 : 1);
     this.player.pitch = THREE.MathUtils.clamp(this.player.pitch, -1.15, 1.2);
@@ -426,7 +433,7 @@ class Game {
   startGame() {
     this.sfx.init(); this.setPlayerTint(null); this.mpPaused = false;
     for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = [];
-    this.player.reset(this.world.playerSpawn); this.player.c.root.visible = true; this.pickups.clear(); this.hud.weaponChanged(); this.hud.resetMatch();
+    this.vehicles.reset(); this.player.reset(this.world.playerSpawn); this.player.c.root.visible = true; this.pickups.clear(); this.hud.weaponChanged(); this.hud.resetMatch();
     this.kills = 0; this.score = 0; this.wave = 0; this.waveKills = 0; this.waveTotal = 0; this.intermission = 0; this.gameOverT = -1; this.startT = this.time;
     this.input.keys = {}; this.input.fire = this.input.aim = false;
     this.state = 'playing'; this.showScreen(null); this.hadLock = false;
@@ -438,7 +445,7 @@ class Game {
   startMP(mode, spawn, yaw, tint, isHost) {
     this.sfx.init(); this.setPlayerTint(tint); this.mpPaused = false;
     for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = [];
-    this.player.respawn(spawn, yaw); this.player.shots = this.player.hits = this.player.headshots = 0; this.pickups.clear(); this.hud.resetMatch(); this.hud.weaponChanged();
+    this.vehicles.reset(); this.player.respawn(spawn, yaw); this.player.shots = this.player.hits = this.player.headshots = 0; this.pickups.clear(); this.hud.resetMatch(); this.hud.weaponChanged();
     this.kills = 0; this.score = 0; this.wave = 0; this.waveKills = 0; this.waveTotal = 0; this.intermission = 0; this.gameOverT = -1; this.startT = this.time;
     this.input.keys = {}; this.input.fire = this.input.aim = false;
     this.state = 'playing'; this.showScreen(null); this.hadLock = false;
@@ -483,7 +490,7 @@ class Game {
   toMenu(keepRoom) {
     if (!keepRoom && this.mp.role && !this.mp.leaving) { this.mp.leave(); return; }
     this.state = 'menu'; this.mpPaused = false; for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = []; this.pickups.clear();
-    this.setPlayerTint(null); this.player.reset(this.world.playerSpawn); this.hud.weaponChanged(); this.menuPose();
+    this.vehicles.reset(); this.setPlayerTint(null); this.player.reset(this.world.playerSpawn); this.hud.weaponChanged(); this.menuPose();
     $('btnRestart').textContent = 'PLAY AGAIN'; $('btnMenu').textContent = 'MAIN MENU'; $('sumTable').innerHTML = '';
     if (!keepRoom) this.showScreen('menu'); if (document.pointerLockElement) document.exitPointerLock();
   }
@@ -493,8 +500,10 @@ class Game {
     const cands = this.world.enemySpawns.filter(s => s.distanceTo(p) > 20 && !this.enemies.some(e => !e.dead && e.pos.distanceTo(s) < 1.5));
     const list = cands.length ? cands : this.world.enemySpawns;
     const sp = list[(Math.random() * list.length) | 0].clone().add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5));
-    const c = this.factory.create({ tint: TINTS[(Math.random() * TINTS.length) | 0] }); this.scene.add(c.root);
-    const e = new Enemy(this, c, sp, this.wave); e.nid = this.nextNid = (this.nextNid || 0) + 1; this.enemies.push(e); this.spawned++;
+    const nid = this.nextNid = (this.nextNid || 0) + 1; // the look follows the network id so co-op clients see the same soldier
+    const look = this.forceLook !== undefined ? this.forceLook : enemyLook(nid);
+    const c = this.factory.create(look ? { look } : { tint: TINTS[nid % TINTS.length] }); this.scene.add(c.root);
+    const e = new Enemy(this, c, sp, this.wave); e.nid = nid; this.enemies.push(e); this.spawned++;
   }
   onEnemyKilled(e, head) {
     this.waveKills++;
@@ -520,6 +529,7 @@ class Game {
   updateGame(dt) {
     this.time += dt;
     const inp = this.mpPaused || (this.mp.active && this.mp.chatOpen) ? { keys: {}, fire: false, aim: false } : this.input;
+    this.vehicles.update(dt, inp);
     this.player.update(dt, inp);
     const mpClient = this.mp.active && !this.mp.isHost;
     if (!mpClient) for (const e of this.enemies) e.update(dt);
@@ -527,7 +537,7 @@ class Game {
     if (this.mp.active) this.mp.update(dt);
     if (mpClient || (this.mp.active && this.mp.mode !== 'coop')) return;
     // cleanup corpses
-    for (const e of this.enemies) if (e.dead && e.deadT > 12) { e.c.dispose(this.scene); e.removed = true; }
+    for (const e of this.enemies) if (e.dead && e.deadT > 8) { e.c.dispose(this.scene); e.removed = true; }
     this.enemies = this.enemies.filter(e => !e.removed);
     // waves
     if (this.mp.active ? this.mp.anyAlive() : !this.player.dead) {
@@ -555,6 +565,21 @@ class Game {
       cam.updateProjectionMatrix(); return;
     }
     if (cam.view && cam.view.enabled) cam.clearViewOffset();
+    if (p.vehicle && !p.dead) { // third-person chase camera around the vehicle (mouse / right thumb orbits, swings back behind when driving)
+      const v = p.vehicle, pitch = THREE.MathUtils.clamp(p.pitch, -0.7, 0.35), yaw = p.yaw;
+      const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+      const pivot = v.pos.clone(); pivot.y += v.h + 0.15;
+      const back = 5.4 + Math.min(2, Math.abs(v.speed) * 0.08);
+      const boxes = this.world.boxes.filter(b => b.owner !== v);
+      const bh = raycastBoxes(boxes, pivot, dir.clone().negate(), back + 0.3);
+      const want = bh ? Math.max(1.2, bh.t - 0.3) : back;
+      this.camBack = want < this.camBack ? want : this.camBack + (want - this.camBack) * Math.min(1, dt * 4);
+      cam.position.copy(pivot).addScaledVector(dir, -this.camBack); if (cam.position.y < v.pos.y + 0.5) cam.position.y = v.pos.y + 0.5;
+      cam.rotation.set(pitch - 0.12, yaw, 0, 'YXZ');
+      if (this.shake > 0) { cam.rotation.x += (Math.random() - 0.5) * this.shake * 0.004; cam.rotation.y += (Math.random() - 0.5) * this.shake * 0.004; this.shake = Math.max(0, this.shake - dt * 6); }
+      const fov = this.settings.fov + Math.min(8, Math.abs(v.speed) * 0.4); cam.fov += (fov - cam.fov) * Math.min(1, dt * 4); cam.updateProjectionMatrix();
+      p.c.root.visible = false; this.aimT = 0; return;
+    }
     this.aimT += ((p.aiming && !p.dead ? 1 : 0) - this.aimT) * Math.min(1, dt * 12);
     this.pivotY += (p.eyeHeight - this.pivotY) * Math.min(1, dt * 10);
     const yaw = p.yaw, pitch = p.pitch;

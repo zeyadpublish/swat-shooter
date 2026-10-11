@@ -54,6 +54,7 @@ export class Player {
   update(dt, inp) {
     const g = this.g, k = inp.keys;
     if (this.dead) { this.deadTime += dt; this.c.update(dt); return; }
+    if (this.vehicle) { this.moving = false; this.sprint = false; this.aiming = false; inp.reloadPressed = false; this.c.root.position.copy(this.pos); this.c.update(dt); return; } // driving: Vehicles moves us
     // ---- input
     let f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
     let s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
@@ -134,6 +135,9 @@ export class Player {
         this.c.play(name, { fade: 0.25 });
       }
     }
+    // upper body keeps aiming while the legs run / walk / strafe
+    this.c.upperName = this.crouch ? 'idle crouching aiming' : 'idle aiming';
+    this.c.upperTarget = this.moving && this.grounded && !this.sprint && !this.turning && (this.aiming || this.fireRecent > 0 || this.reloading > 0) ? 1 : 0;
     // aim pitch on spine (stronger when aiming)
     const pitchTarget = (this.aiming || this.fireRecent > 0 ? 0.95 : 0.6) * THREE.MathUtils.clamp(this.pitch, -1.0, 1.0) + (this.sprint ? 0 : 0);
     this.c.aimPitch += (pitchTarget - this.c.aimPitch) * Math.min(1, dt * 12);
@@ -167,7 +171,7 @@ export class Player {
     this.c.root.position.copy(this.pos);
     this.c.update(dt);
     // reload / switch: tilt and lower the weapon procedurally (no reload clip in the pack)
-    const q = this.c.gun.quaternion.copy(this.c.f.gunLocalQuat); this.c.gun.position.copy(this.c.f.gunLocalPos);
+    const q = this.c.gun.quaternion; // reset to the mount (+ recoil) by Character.update
     if (this.reloading > 0) {
       const t = W.reload - this.reloading; const w = Math.sin(Math.min(1, t / W.reload) * Math.PI);
       q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5 * w, 0, 0.7 * w)));
@@ -175,7 +179,7 @@ export class Player {
     if (this.switchT > 0) { // 0.5 -> 0: down (0.5..0.25), up (0.25..0)
       const k = Math.sin((1 - this.switchT / 0.5) * Math.PI);
       q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(1.1 * k, 0, 0.35 * k)));
-      this.c.gun.position.y -= 0.25 * k / this.c.f.gunScale; // pull down out of view
+      this.c.gun.position.y -= 0.25 * k / this.c.gunS; // pull down out of view
     }
     if (this.pumpT > 0) { this.pumpT -= dt; const k = Math.sin(Math.max(0, 1 - this.pumpT / 0.45) * Math.PI); q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.18 * k, 0, 0))); }
   }
@@ -216,11 +220,13 @@ export class Player {
     const mb = raycastBoxes(g.world.boxes, muzzle, md, Math.max(0, ml - 0.05));
     let normal = wh && !hitEnemy ? wh.normal : null, kind = wh ? wh.box.mat : 'concrete';
     if (mb) { point = mb.point; normal = mb.normal; kind = mb.box.mat; hitEnemy = null; }
-    return { point, normal, kind, enemy: hitEnemy, part, dist: tStart + best, muzzle, md, o };
+    const box = mb ? mb.box : (!hitEnemy && wh) ? wh.box : null;
+    return { point, normal, kind, enemy: hitEnemy, part, dist: tStart + best, muzzle, md, o, owner: box && box.owner };
   }
   shoot() {
     const g = this.g, cam = g.camera, W = this.weapon;
     this.cool = W.cool; this.mag--; this.fireRecent = 0.6; this.shots++;
+    this.c.kick(Math.min(1.4, 0.35 + W.recoil * 30));
     const aim = cam.getWorldDirection(new THREE.Vector3());
     const sp = Math.max(0, this.spread());
     const hits = new Map(), pellets = [], ends = []; let firstMd = null, anyHit = false, muzzle = null;
@@ -238,6 +244,11 @@ export class Player {
         if (k < 3 || W.pellets === 1) g.fx.blood(r.point, dir);
       } else if (r.normal) {
         if (k < 5) { g.fx.impact(r.point, r.normal, r.kind); if (k === 0) g.sfx.impact(r.point, r.kind); }
+        if (r.owner && r.owner.damage) { // armoured vehicle: chip damage
+          const d = W.dmg * 0.6 * falloff(W, r.dist);
+          if (g.mp && g.mp.active && !g.mp.isHost) g.mp.net.broadcast({ t: 'vd', v: r.owner.idx, d: Math.round(d) });
+          else r.owner.damage(d, g.mp && g.mp.active ? g.mp.myId : 'local');
+        }
       }
     }
     this.bloom = Math.min(0.035 + W.bloom * 2, this.bloom + W.bloom);
@@ -247,7 +258,7 @@ export class Player {
     g.fx.muzzleFlash(this.c.muzzle, firstMd, true, W.flash);
     if (W.pump) { this.pumpT = 0.45; setTimeout(() => g.fx.shell(this.c), 380); } else g.fx.shell(this.c);
     g.sfx.gunshot(null, 1, W.sound); g.haptic(W.pellets > 1 || W.scope ? 30 : 9);
-    g.alert(this.pos, W.sound === 'pistol' || W.sound === 'smg' ? 32 : 45);
+    g.alert(this.pos, W.sound === 'pistol' ? 32 : 45);
     if (g.mp && g.mp.active) { // multiplayer: the host decides what the bullets did
       for (const [, h] of hits) { this.hits++; if (h.head) this.headshots++; }
       if (hits.size) g.haptic(18);

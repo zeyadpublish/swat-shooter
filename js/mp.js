@@ -5,12 +5,14 @@
 // kills, respawns, scores and the timer, and broadcasts snapshots (~20 Hz). Remote players are drawn 100 ms in the past
 // and interpolated between snapshots.
 import * as THREE from 'three';
-import { Net, cleanCode, errText } from './net.js';
+import { Net, LocalNet, cleanCode, errText } from './net.js';
+import { Bot, BOT_NAMES } from './bots.js';
 import { WEAPON_BY_ID, falloff } from './weapons.js';
 import { raycastBoxes } from './physics.js';
 import { angDiff } from './player.js';
 import { esc, cleanName } from './ui.js';
 import { icon } from './icons.js';
+import { TEAM_LOOKS, FFA_LOOKS, enemyLook } from './character.js';
 
 const $ = (id) => document.getElementById(id);
 const now = () => performance.now() / 1000;
@@ -51,10 +53,11 @@ class Puppet {
     const yaw = s0.y + angDiff(s1.y, s0.y) * k;
     const c = this.c; c.root.visible = true; this.seen = true;
     c.yaw = yaw; c.aimPitch += ((s0.pi + (s1.pi - s0.pi) * k) - c.aimPitch) * Math.min(1, dt * 15);
-    const st = k < 0.5 ? s0 : s1; this.crouch = !!(st.f & 1); this.flags = st.f;
+    const st = k < 0.5 ? s0 : s1; this.crouch = !!(st.f & 1); this.flags = st.f; c.upperTarget = st.f & 8 ? 1 : 0; c.upperName = this.crouch ? 'idle crouching aiming' : 'idle aiming';
     if (st.w && c.gunId !== st.w && WEAPON_BY_ID[st.w]) c.setGun(st.w);
     if (st.a) c.play(st.a, { fade: 0.2, once: ONCE.test(st.a), sync: LOCO.test(st.a) && LOCO.test(c.currentName), timeScale: st.ts || 1 });
-    c.root.position.copy(this.pos); c.update(dt);
+    c.root.position.copy(this.pos); if (st.f & 16) c.root.visible = false; // driving: hidden inside the vehicle
+    c.update(dt);
     // footsteps
     if (LOCO.test(c.currentName) && this.mp.g.player.pos.distanceTo(this.pos) < 24) {
       const ph = c.phase(); if ((this.lastPhase < 0.5 && ph >= 0.5) || ph < this.lastPhase) this.mp.g.sfx.step(this.pos, /sprint/.test(c.currentName) ? 0.16 : 0.1); this.lastPhase = ph;
@@ -64,7 +67,7 @@ class Puppet {
   dispose() { this.c.dispose(this.mp.g.scene); if (this.plate) this.plate.remove(); }
 }
 class RemotePlayer extends Puppet {
-  constructor(mp, info) { super(mp, mp.tintFor(info), null); this.id = info.id; }
+  constructor(mp, info) { super(mp, mp.tintFor(info), null); this.id = info.id; this.isPlayer = true; }
   get info() { return this.mp.players.get(this.id) || {}; }
   get dead() { return !!this.info.dead; }
   get team() { return this.info.team; }
@@ -72,14 +75,16 @@ class RemotePlayer extends Puppet {
   damage(amount, fromPos) { this.mp.applyDamage(this.id, amount, -1, fromPos, false, null); }
 }
 class Ghost extends Puppet { // co-op enemy as seen by a client
-  constructor(mp, nid, gun) { super(mp, FFA_TINTS[nid % 5], gun); this.nid = nid; this.dead = false; this.canSee = false; }
+  constructor(mp, nid, gun) { super(mp, enemyLook(nid) || FFA_TINTS[nid % 5], gun); this.nid = nid; this.dead = false; this.canSee = false; }
   alert() {} damage() {}
 }
+
+const PUBLIC_URL = 'https://zeyadpublish.github.io/swat-shooter/';
 
 export class MP {
   constructor(game) {
     this.g = game; this.net = null; this.role = null; this.active = false; this.players = new Map(); this.remotes = new Map(); this.ghosts = new Map();
-    this.mode = 'tdm'; this.lim = { score: 30, time: 300 }; this.myId = -1; this.rtt = 0; this.sendT = 0; this.teamScore = [0, 0]; this.timeLeft = 0;
+    this.mode = 'tdm'; this.lim = { score: 30, time: 300 }; this.botCount = 3; this.botDiff = 'normal'; this.myId = -1; this.rtt = 0; this.sendT = 0; this.teamScore = [0, 0]; this.timeLeft = 0;
     const me = this;
     this.localProxy = { // the host's own player, as an AI target in co-op
       get pos() { return game.player.pos; }, get vel() { return game.player.vel; }, get crouch() { return game.player.crouch; }, get dead() { return game.player.dead; },
@@ -90,7 +95,7 @@ export class MP {
   get isHost() { return this.role === 'host'; }
   get me() { return this.players.get(this.myId); }
   get inLobby() { return !!this.role && !this.active; }
-  tintFor(p) { return this.mode === 'tdm' ? TEAM_TINT[p.team || 0] : FFA_TINTS[p.id % FFA_TINTS.length]; }
+  tintFor(p) { const id = p.id | 0; if (this.mode === 'tdm') { const L = TEAM_LOOKS[p.team || 0]; return L[id % L.length]; } return FFA_LOOKS[id % FFA_LOOKS.length]; } // appearance (look key)
   name(id) { const p = this.players.get(id); return p ? p.name : '?'; }
 
   // ------------------------------------------------------------------ UI: multiplayer menu + lobby
@@ -101,10 +106,12 @@ export class MP {
     $('joinCode').addEventListener('input', () => { const v = cleanCode($('joinCode').value); if (v !== $('joinCode').value) $('joinCode').value = v; });
     $('joinCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
     $('btnHost').onclick = () => this.host();
+    $('btnBots').onclick = () => this.host(true);
     $('btnJoin').onclick = () => this.join($('joinCode').value);
     $('lobbyLeave').onclick = () => { g.sfx.ui('back'); this.leave(); };
-    for (const id of ['lbMode', 'lbScore', 'lbTime']) $(id).addEventListener('change', () => {
-      if (!this.isHost) return; this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value }; this.broadcastLobby();
+    for (const id of ['lbMode', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).addEventListener('change', () => {
+      if (!this.isHost) return; this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value };
+      this.botCount = +$('lbBots').value; this.botDiff = $('lbDiff').value; this.broadcastLobby();
     });
     $('btnReady').onclick = () => { if (this.isHost) return; this.net.broadcast({ t: 'rd' }); };
     $('btnTeam').onclick = () => { if (this.isHost) { const me = this.me; me.team = 1 - me.team; this.broadcastLobby(); } else this.net.broadcast({ t: 'tm' }); };
@@ -126,7 +133,12 @@ export class MP {
     addEventListener('beforeunload', () => { if (this.net) { this.net.broadcast(this.isHost ? { t: 'closed' } : { t: 'bye' }); } });
   }
   status(t, err) { $('mpstatus').textContent = t; $('mpstatus').classList.toggle('err', !!err); }
-  link() { return location.origin + location.pathname + '?room=' + this.code; }
+  // The Android/Windows apps run from a local origin (https://localhost, http://127.0.0.1:port), which a friend can't open,
+  // so their invite links point at the public web build instead (same broker and room ids, so web and app players can mix).
+  link() {
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && (window.Capacitor || window.Neutralino || window.NL_PORT);
+    return (local ? PUBLIC_URL : location.origin + location.pathname) + '?room=' + this.code;
+  }
   async copyLink() {
     const url = this.link(); let ok = false;
     try { await navigator.clipboard.writeText(url); ok = true; } catch (e) {
@@ -145,13 +157,15 @@ export class MP {
     n.onError = (e) => { if (e && e.type !== 'peer-unavailable') console.warn('peer error', e.type || e); };
     return n;
   }
-  async host() {
+  async host(offline = false) {
     if (this.busy) return; this.busy = true; this.g.sfx.init();
-    this.status('Creating room…');
+    this.status(offline ? '' : 'Creating room…');
     try {
-      const n = this.setupNet(); this.code = await n.host(); this.role = 'host'; this.myId = 0; this.nextId = 1;
+      const n = offline ? (this.net = new LocalNet()) : this.setupNet(); this.code = await n.host(); this.role = 'host'; this.myId = 0; this.nextId = 1; this.offline = offline;
+      if (offline && $('lbMode').value === 'coop') $('lbMode').value = 'tdm';
       this.players.clear(); this.players.set(0, this.newPlayer(0, this.g.settings.name, 0, null)); this.me.ready = true;
-      this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value };
+      this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value }; this.botCount = +$('lbBots').value; this.botDiff = $('lbDiff').value;
+      if (offline && !this.botCount) { this.botCount = 3; $('lbBots').value = '3'; }
       this.startTick(); this.showLobby();
     } catch (e) { this.status(errText(e), true); this.cleanup(); }
     this.busy = false;
@@ -178,6 +192,7 @@ export class MP {
     const p = [...this.players.values()].find(q => q.pid === pid);
     if (m.t === 'hello') {
       if (p) return;
+      if (this.players.size >= MAX_PLAYERS) { const bot = [...this.players.values()].reverse().find(q => q.bot); if (bot) { this.players.delete(bot.id); this.removeRemote(bot.id); this.broadcastRoster(); } }
       if (this.players.size >= MAX_PLAYERS) { this.net.send(pid, { t: 'full' }); setTimeout(() => this.net.kick(pid), 400); return; }
       const cnt = [0, 1].map(t => [...this.players.values()].filter(q => q.team === t).length);
       const np = this.newPlayer(this.nextId++, this.uniqueName(m.name), cnt[1] < cnt[0] ? 1 : 0, pid);
@@ -198,12 +213,16 @@ export class MP {
       case 'sh': this.onClientShot(p, m); break;
       case 'ch': this.chat(p.id, String(m.m || '').slice(0, 80)); break;
       case 'bye': this.net.kick(pid); break;
+      case 've': { const v = this.g.vehicles.list[m.v | 0], last = p.hist[p.hist.length - 1]; if (v && !p.dead && last && v.rectDist(last.p) < 3.5 && !this.vehicleOf(p.id)) this.g.vehicles.enter(v, p.id); break; }
+      case 'vx': { const v = this.vehicleOf(p.id); if (v) this.g.vehicles.eject(v); break; }
+      case 'vd': { const v = this.g.vehicles.list[m.v | 0]; const d = Math.min(120, Math.max(0, +m.d || 0)); if (v && !p.dead && now() - (p.lastVd || 0) > 0.06) { p.lastVd = now(); v.damage(d, p.id); } break; }
     }
   }
   onState(p, m) {
     if (!this.active || !m.p) return;
     p.ping = Math.round(m.r || p.ping); p.state = m; const t = now();
     const rp = this.remotes.get(p.id); if (!rp) return;
+    p.vin = Array.isArray(m.vi) ? { th: THREE.MathUtils.clamp(+m.vi[0] || 0, -1, 1), st: THREE.MathUtils.clamp(+m.vi[1] || 0, -1, 1), hb: m.vi[2] ? 1 : 0 } : null;
     const st = { p: V(m.p), y: +m.y || 0, pi: +m.pi || 0, a: String(m.a || 'idle'), ts: +m.ts || 1, w: m.w, f: m.f | 0 };
     rp.push(st, t); p.hist.push({ t, p: st.p, c: !!(st.f & 1) }); while (p.hist.length > 40) p.hist.shift();
   }
@@ -213,7 +232,7 @@ export class MP {
     if (this.active) { this.broadcastRoster(); this.checkCoopWipe(); } else this.broadcastLobby();
   }
   broadcastLobby() {
-    const m = { t: 'lb', mode: this.mode, lim: this.lim, code: this.code, pl: [...this.players.values()].map(p => [p.id, p.name, p.team, p.ready ? 1 : 0]) };
+    const m = { t: 'lb', mode: this.mode, lim: this.lim, code: this.code, bots: [this.botCount, this.botDiff], pl: [...this.players.values()].filter(p => !p.bot).map(p => [p.id, p.name, p.team, p.ready ? 1 : 0]) };
     this.net.broadcast(m); this.renderLobby(m);
   }
   roster() { return [...this.players.values()].map(p => [p.id, p.name, p.team, p.k, p.d, p.s]); }
@@ -225,7 +244,7 @@ export class MP {
       case 'welcome': this.myId = m.id; this.welcomeCb && this.welcomeCb(); this.welcomeCb = null; break;
       case 'full': this.rejectCb && this.rejectCb(new Error('That room is full (8 players).')); break;
       case 'po': this.rtt = (performance.now() - m.c); break;
-      case 'lb': this.mode = m.mode; this.lim = m.lim; this.syncPlayers(m.pl.map(([id, name, team, ready]) => ({ id, name, team, ready: !!ready }))); this.renderLobby(m); break;
+      case 'lb': this.mode = m.mode; this.lim = m.lim; if (m.bots) { this.botCount = m.bots[0]; this.botDiff = m.bots[1]; } this.syncPlayers(m.pl.map(([id, name, team, ready]) => ({ id, name, team, ready: !!ready }))); this.renderLobby(m); break;
       case 'st': this.beginMatch(m); break;
       case 'ro': this.syncPlayers(m.pl.map(([id, name, team, k, d, s]) => ({ id, name, team, k, d, s }))); break;
       case 'sn': this.onSnapshot(m); break;
@@ -260,23 +279,29 @@ export class MP {
   showLobby() {
     const g = this.g; $('roomCode').textContent = this.code; g.ui.show('lobby');
     $('lobbyInfo').textContent = this.isHost ? 'Share the code or link. Start when everyone is ready.' : 'Waiting for the host to start…';
-    for (const id of ['lbMode', 'lbScore', 'lbTime']) $(id).disabled = !this.isHost;
+    for (const id of ['lbMode', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).disabled = !this.isHost;
     $('btnStart').classList.toggle('hidden', !this.isHost); $('btnReady').classList.toggle('hidden', this.isHost);
-    $('btnShare').classList.toggle('hidden', !navigator.share);
+    $('btnShare').classList.toggle('hidden', !navigator.share || !!this.offline); $('btnCopy').classList.toggle('hidden', !!this.offline);
+    $('lbMode').querySelector('option[value="coop"]').disabled = !!this.offline;
+    if (this.offline) { $('roomCode').textContent = 'OFFLINE'; $('lobbyInfo').textContent = 'Bot match on this device. Pick the mode, bots and skill, then start.'; }
     if (this.isHost) this.broadcastLobby();
   }
   renderLobby(m) {
     if (!m) return; const pl = [...this.players.values()];
     $('lbMode').value = this.mode; $('lbScore').value = String(this.lim.score); $('lbTime').value = String(this.lim.time);
     $('lbScore').parentElement.classList.toggle('hidden', this.mode === 'coop'); $('lbTime').parentElement.classList.toggle('hidden', this.mode === 'coop');
+    $('lbBots').parentElement.classList.toggle('hidden', this.mode === 'coop'); $('lbDiff').parentElement.classList.toggle('hidden', this.mode === 'coop');
+    $('lbBots').value = String(this.botCount); $('lbDiff').value = this.botDiff;
+    const nBots = this.mode === 'coop' ? 0 : Math.min(this.botCount, MAX_PLAYERS - pl.length), DN = { easy: 'RECRUIT', normal: 'REGULAR', hard: 'VETERAN' }[this.botDiff] || '';
+    let bk = 0; const botRow = (n) => Array.from({ length: n }, () => `<div class="lp bot"><span class="nm"><i class="ai">AI</i>Bot ${++bk}</span><span class="tag">${DN}</span></div>`).join('');
     const row = (p) => `<div class="lp ${this.mode === 'tdm' ? TEAM_CLS[p.team] : ''}${p.id === this.myId ? ' me' : ''}"><span class="nm">${esc(p.name)}</span>${p.id === 0 ? '<span class="tag hs">HOST</span>' : p.ready ? '<span class="tag rd">READY</span>' : '<span class="tag">NOT READY</span>'}</div>`;
     const el = $('lobbyPlayers');
-    if (this.mode === 'tdm') { el.classList.remove('single'); el.innerHTML = [0, 1].map(t => `<div class="lteam ${TEAM_CLS[t]}"><h4>${TEAM_NAME[t]} TEAM</h4>${pl.filter(p => p.team === t).map(row).join('')}</div>`).join(''); }
-    else { el.classList.add('single'); el.innerHTML = `<div class="lteam"><h4>${MODE_NAME[this.mode]} · ${pl.length}/${MAX_PLAYERS}</h4>${pl.map(row).join('')}</div>`; }
+    if (this.mode === 'tdm') { el.classList.remove('single'); const split = this.botSplit(pl, nBots); el.innerHTML = [0, 1].map(t => `<div class="lteam ${TEAM_CLS[t]}"><h4>${TEAM_NAME[t]} TEAM</h4>${pl.filter(p => p.team === t).map(row).join('')}${botRow(split[t])}</div>`).join(''); }
+    else { el.classList.add('single'); el.innerHTML = `<div class="lteam"><h4>${MODE_NAME[this.mode]} · ${pl.length + nBots}/${MAX_PLAYERS}</h4>${pl.map(row).join('')}${botRow(nBots)}</div>`; }
     $('btnTeam').classList.toggle('hidden', this.mode !== 'tdm');
     const me = this.me; $('btnReady').classList.toggle('on', !!(me && me.ready)); $('btnReady').textContent = me && me.ready ? 'READY ✓' : 'READY';
     const others = pl.filter(p => p.id !== 0), ready = others.filter(p => p.ready).length;
-    if (this.isHost) $('btnStart').textContent = others.length && ready < others.length ? `START (${ready}/${others.length} READY)` : 'START MATCH';
+    if (this.isHost) $('btnStart').textContent = others.length && ready < others.length ? `START (${ready}/${others.length} READY)` : nBots ? `START VS ${nBots} BOT${nBots > 1 ? 'S' : ''}` : 'START MATCH';
     window.__lobby = { n: pl.length, ready, mode: this.mode };
   }
 
@@ -297,10 +322,24 @@ export class MP {
     return { p: best.clone(), y: yaw };
   }
   posOf(id) { if (id === this.myId) return this.g.player.pos; const r = this.remotes.get(id); return r && r.seen ? r.pos : null; }
+  crouchOf(id) { if (id === this.myId) return this.g.player.crouch; const r = this.remotes.get(id); return !!(r && r.crouch); }
+  velOf(id) { if (id === this.myId) return this.g.player.vel; const r = this.remotes.get(id); return r ? r.vel : null; }
+  // how many bots go to each team so the teams end up even (humans first)
+  botSplit(pl, n) { const c = [0, 1].map(t => pl.filter(p => p.team === t && !p.bot).length), out = [0, 0]; for (let i = 0; i < n; i++) { const t = c[0] + out[0] <= c[1] + out[1] ? 0 : 1; out[t]++; } return out; }
+  addBots() {
+    this.removeBots(); if (this.mode === 'coop') return;
+    const humans = [...this.players.values()]; const n = Math.max(0, Math.min(this.botCount, MAX_PLAYERS - humans.length));
+    const split = this.botSplit(humans, n), names = BOT_NAMES.slice().sort(() => Math.random() - 0.5); let k = 0;
+    for (const t of [0, 1]) for (let i = 0; i < split[t]; i++) {
+      const p = this.newPlayer(this.nextId++, 'BOT ' + names[k++ % names.length], this.mode === 'tdm' ? t : 0, null); p.bot = true; p.ready = true; this.players.set(p.id, p);
+    }
+  }
+  removeBots() { for (const p of [...this.players.values()]) if (p.bot) { this.players.delete(p.id); this.removeRemote(p.id); } }
   startMsg(all = true) {
     return { t: 'st', mode: this.mode, lim: this.lim, pl: this.roster(), sp: Object.fromEntries([...this.players.values()].filter(p => !p.dead).map(p => [p.id, [...A(p.spawn.p), r2(p.spawn.y)]])), tl: this.timeLeft, sc: this.teamScore, wave: this.g.wave || 0, all };
   }
   startMatch() {
+    this.addBots();
     this.teamScore = [0, 0]; this.matchEnd = now() + this.lim.time; this.timeLeft = this.lim.time;
     for (const p of this.players.values()) Object.assign(p, { k: 0, d: 0, s: 0, hp: 100, dead: false, prot: now() + PROTECT, hist: [], hs: 0, shots: 0, hits: 0, respawnAt: 0 });
     for (const p of this.players.values()) { p.spawn = this.pickSpawn(p); p.hist.push({ t: now(), p: p.spawn.p.clone(), c: false }); }
@@ -312,7 +351,7 @@ export class MP {
     for (const r of this.remotes.values()) r.dispose(); this.remotes.clear();
     for (const r of this.ghosts.values()) r.dispose(); this.ghosts.clear();
     this.active = true;
-    for (const p of this.players.values()) if (p.id !== this.myId) this.addRemote(p);
+    for (const p of this.players.values()) if (p.id !== this.myId) { this.addRemote(p); const r = this.remotes.get(p.id), s = m.sp[p.id]; if (r && r.isBot && s) r.spawn(V(s), s[3]); }
     const sp = m.sp[this.myId];
     const me = this.me;
     g.startMP(this.mode, sp ? V(sp) : g.world.playerSpawn.clone(), sp ? sp[3] : 0, this.tintFor(me || { id: this.myId, team: 0 }), this.isHost);
@@ -324,7 +363,7 @@ export class MP {
     g.hud.banner(MODE_NAME[this.mode], this.mode === 'tdm' ? `YOU ARE ON ${TEAM_NAME[me ? me.team : 0]} TEAM` : this.mode === 'ffa' ? `FIRST TO ${this.lim.score} KILLS` : 'SURVIVE TOGETHER', 3);
     this.sendT = 0; this.updateBar();
   }
-  addRemote(p) { if (this.remotes.has(p.id) || p.id === this.myId) return; const r = new RemotePlayer(this, p); this.remotes.set(p.id, r); r.plate = document.createElement('div'); r.plate.className = 'np'; $('nameplates').appendChild(r.plate); }
+  addRemote(p) { if (this.remotes.has(p.id) || p.id === this.myId) return; const r = p.bot && this.isHost ? new Bot(this, p) : new RemotePlayer(this, p); this.remotes.set(p.id, r); r.plate = document.createElement('div'); r.plate.className = 'np'; $('nameplates').appendChild(r.plate); }
   removeRemote(id) { const r = this.remotes.get(id); if (r) { r.dispose(); this.remotes.delete(id); } }
 
   // ------------------------------------------------------------------ per-frame + network tick
@@ -347,14 +386,16 @@ export class MP {
   }
   stateOfLocal() {
     const p = this.g.player, c = p.c;
-    return { p: A(p.pos), y: r2(c.yaw), pi: r2(c.aimPitch), a: c.currentName, ts: c.current ? r2(c.current.timeScale) : 1, w: c.gunId, f: (p.crouch ? 1 : 0) | (p.aiming ? 2 : 0) | (p.sprint ? 4 : 0) };
+    return { p: A(p.pos), y: r2(c.yaw), pi: r2(c.aimPitch), a: c.currentName, ts: c.current ? r2(c.current.timeScale) : 1, w: c.gunId, f: (p.crouch ? 1 : 0) | (p.aiming ? 2 : 0) | (p.sprint ? 4 : 0) | (c.upperTarget ? 8 : 0) | (p.vehicle ? 16 : 0) };
   }
-  sendState() { const s = this.stateOfLocal(); s.t = 's'; s.r = Math.round(this.rtt); this.net.broadcast(s); }
+  vehicleOf(id) { return this.g.vehicles.list.find(v => v.driver === id && !v.dead) || null; }
+  sendState() { const s = this.stateOfLocal(); s.t = 's'; s.r = Math.round(this.rtt); const vi = this.g.player.vehicle && this.g.vehicles.localInput; if (vi) s.vi = [vi.th, vi.st, vi.hb]; this.net.broadcast(s); }
   hostTick(dt) {
     const t = now(), g = this.g, me = this.me;
     // own history (for validating clients' shots at the host)
     me.hist.push({ t, p: g.player.pos.clone(), c: g.player.crouch }); while (me.hist.length > 40) me.hist.shift();
     me.hp = g.player.health; me.dead = g.player.dead;
+    for (const r of this.remotes.values()) if (r.isBot && r.seen) { const p = r.info; p.state = r.state(); p.hist.push({ t, p: r.pos.clone(), c: r.crouch }); while (p.hist.length > 40) p.hist.shift(); }
     // timer, regen, respawns
     if (this.mode !== 'coop') { this.timeLeft = Math.max(0, this.matchEnd - t); if (this.timeLeft <= 0) return this.endMatch('time'); }
     for (const p of this.players.values()) {
@@ -366,7 +407,7 @@ export class MP {
       const s = p.id === this.myId ? this.stateOfLocal() : p.state; if (!s || !s.p) continue;
       ps.push([p.id, s.p[0], s.p[1], s.p[2], s.y, s.pi, s.a, s.ts, s.w, s.f, Math.ceil(p.hp), p.dead ? 1 : 0, p.prot > t ? 1 : 0, p.k, p.d, p.s, p.ping]);
     }
-    const m = { t: 'sn', tl: Math.round(this.timeLeft), sc: this.teamScore, ps };
+    const m = { t: 'sn', tl: Math.round(this.timeLeft), sc: this.teamScore, ps, vh: g.vehicles.netStates() };
     if (this.mode === 'coop') {
       m.wv = g.wave; m.left = Math.max(0, g.waveTotal - g.waveKills);
       m.en = g.enemies.map(e => { if (e.nid == null) e.nid = this.nextNid = (this.nextNid || 0) + 1; const c = e.c; return [e.nid, r2(e.pos.x), r2(e.pos.y), r2(e.pos.z), r2(c.yaw), r2(c.aimPitch), c.currentName, c.current ? r2(c.current.timeScale) : 1, e.gunId, e.dead ? 1 : 0]; });
@@ -396,6 +437,7 @@ export class MP {
   onSnapshot(m) {
     if (!this.active) return; const t = now(), g = this.g;
     this.timeLeft = m.tl; this.teamScore = m.sc || this.teamScore;
+    if (m.vh) g.vehicles.applyNet(m.vh);
     for (const a of m.ps) {
       const [id, x, y, z, yaw, pi, an, ts, w, f, hp, dead, prot, k, d, s, ping] = a;
       const p = this.players.get(id); if (!p) continue;
@@ -430,7 +472,7 @@ export class MP {
     if (this.isHost) {
       this.net.broadcast({ t: 'fx', id: this.myId, w: W.id, m: A(muzzle), e: ends.map(A) });
       for (const [tg, h] of hits) {
-        if (tg instanceof RemotePlayer) {
+        if (tg.isPlayer) {
           const dealt = this.applyDamage(tg.id, h.dmg, this.myId, g.player.pos.clone(), h.head, W.id);
           if (dealt > 0) { const kill = tg.dead; g.hud.hitmarker(h.head, kill); g.sfx.hit(h.head); g.hud.damageNumber(h.point, dealt, h.head); me.hits++; if (h.head) me.hs++; }
         } else if (!tg.dead) { // co-op enemy
@@ -438,7 +480,7 @@ export class MP {
         }
       }
     } else {
-      const key = (t) => t instanceof RemotePlayer ? 'p' + t.id : 'e' + t.nid;
+      const key = (t) => t.isPlayer ? 'p' + t.id : 'e' + t.nid;
       this.net.broadcast({ t: 'sh', w: W.id, o: A(origin), m: A(muzzle), e: ends.map(A), h: pellets.map(q => [key(q.t), q.part === 'head' ? 1 : q.part === 'legs' ? 2 : 0, ...A(q.pt), r2(q.dist)]) });
       for (const [, h] of hits) { g.hud.hitmarker(h.head, false); g.sfx.hit(h.head); }
     }
@@ -492,7 +534,7 @@ export class MP {
     if (!this.active) return; const g = this.g;
     const src = m.id != null ? this.remotes.get(m.id) : this.ghosts.get(m.en); if (m.id === this.myId) return;
     const W = WEAPON_BY_ID[m.w]; const mz = src && src.seen ? src.c.muzzle.getWorldPosition(new THREE.Vector3()) : V(m.m);
-    if (src) src.lastFire = now();
+    if (src) { src.lastFire = now(); if (src.c) src.c.kick(0.7); }
     const ends = (m.e || []).map(V);
     const dir = ends.length ? ends[0].clone().sub(mz).normalize() : new THREE.Vector3(0, 0, -1);
     if (src && src.seen) g.fx.muzzleFlash(src.c.muzzle, dir, false, W ? W.flash : 1);
@@ -523,7 +565,8 @@ export class MP {
       if (this.g.player.dead && !v.dead) this.kill(aid, vid, wid, head);
     } else {
       v.hp = Math.max(0, v.hp - amount);
-      this.net.send(v.pid, { t: 'dm', hp: Math.ceil(v.hp), f: A(fromPos || new THREE.Vector3()) });
+      if (v.bot) { const b = this.remotes.get(vid); if (b && b.onHurt && fromPos) b.onHurt(fromPos); }
+      else this.net.send(v.pid, { t: 'dm', hp: Math.ceil(v.hp), f: A(fromPos || new THREE.Vector3()) });
       if (v.hp <= 0) this.kill(aid, vid, wid, head);
     }
     return amount;
@@ -575,7 +618,7 @@ export class MP {
   onSpawn(m) {
     const p = this.players.get(m.id); if (p) { p.dead = false; p.hp = 100; p.prot = now() + PROTECT; }
     if (m.id === this.myId) { this.g.player.respawn(V(m.p), m.y); $('respawn').classList.add('hidden'); this.respawnT = 0; if (this.g.touch) this.g.touch.reset(); }
-    else { const r = this.remotes.get(m.id); if (r) { r.buf.length = 0; r.pos.copy(V(m.p)); } }
+    else { const r = this.remotes.get(m.id); if (r && r.isBot) r.spawn(V(m.p), m.y); else if (r) { r.buf.length = 0; r.pos.copy(V(m.p)); } }
   }
   // host: local death is handled in applyDamage; client: wait for the host's kill/spawn messages
   onLocalDeath() { if (!this.isHost && this.me) this.me.dead = true; }
@@ -619,6 +662,7 @@ export class MP {
     const won = m.mode === 'tdm' ? (this.me && m.win === this.me.team) : m.mode === 'ffa' ? m.win === this.myId : false;
     g.endMP({ title: m.ti, sub: m.sub, won, rows: m.rows, myId: this.myId, mode: m.mode, mine });
     this.teardownMatch();
+    if (this.isHost) { this.removeBots(); this.broadcastRoster(); }
   }
   teardownMatch() {
     for (const r of this.remotes.values()) r.dispose(); this.remotes.clear();
@@ -640,7 +684,7 @@ export class MP {
   cleanup() {
     clearInterval(this.tickI); if (this.active) { this.active = false; } this.teardownMatch();
     if (this.net) { this.net.close(); this.net = null; }
-    this.role = null; this.players.clear(); this.myId = -1; this.rtt = 0;
+    this.role = null; this.players.clear(); this.myId = -1; this.rtt = 0; this.offline = false;
   }
 
   // ------------------------------------------------------------------ nameplates, scoreboard, chat, radar

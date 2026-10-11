@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to netconfig.json to add TURN servers for players behind strict NATs. Use EITHER static iceServers OR a credentialsUrl that returns short-lived credentials ({\"iceServers\":[...]} or [...]). Remove the keys you do not use.",
+  "iceServers": [
+    { "urls": "stun:stun.l.google.com:19302" },
+    { "urls": ["turn:YOUR-TURN-HOST:3478?transport=udp", "turn:YOUR-TURN-HOST:3478?transport=tcp", "turns:YOUR-TURN-HOST:443?transport=tcp"], "username": "USER", "credential": "PASSWORD" }
+  ],
+  "credentialsUrl": "https://YOUR-APP.metered.live/api/v1/turn/credentials?apiKey=YOUR_KEY",
+  "iceTransportPolicy": "all"
+}

@@ -11,10 +11,6 @@ export const WEAPONS = [
     grip: [0, -0.015, -0.215], muzzle: [0, 0.075, 0.44], eject: [-0.03, 0.07, -0.1], magNode: null,
     dmg: 41, head: 2.6, legs: 0.75, cool: 0.1, auto: true, mag: 30, reserve: 150, reload: 2.4,
     hip: 0.014, ads: 0.0022, bloom: 0.006, recoil: 0.015, range: [28, 75, 0.6], pellets: 1, flash: 1.1, sound: 'ak', mob: 0.72, zoom: 22 },
-  { id: 'mac10', name: 'MAC-10', cls: 'SMG', file: 'assets/guns/mac10.glb', thumb: 'assets/ui/mac10.png',
-    grip: [0, -0.03, -0.025], muzzle: [0, 0.065, 0.152], eject: [-0.03, 0.06, 0.02], magNode: null,
-    dmg: 22, head: 2.0, legs: 0.8, cool: 0.058, auto: true, mag: 32, reserve: 224, reload: 1.8,
-    hip: 0.016, ads: 0.0045, bloom: 0.004, recoil: 0.008, range: [12, 40, 0.45], pellets: 1, flash: 0.75, sound: 'smg', mob: 0.95, zoom: 16 },
   { id: 'shotgun', name: 'PUMP SHOTGUN', cls: 'SHOTGUN', file: 'assets/guns/shotgun.glb', thumb: 'assets/ui/shotgun.png',
     grip: [0, -0.005, -0.16], muzzle: [0, 0.055, 0.52], eject: [-0.03, 0.04, -0.03], magNode: null,
     dmg: 17, head: 1.5, legs: 0.8, cool: 0.85, auto: false, mag: 7, reserve: 42, reload: 2.7,
@@ -33,6 +29,6 @@ export function falloff(w, d) {
   const [r0, r1, m] = w.range; if (d <= r0) return 1; if (d >= r1) return m;
   return 1 - (d - r0) / (r1 - r0) * (1 - m);
 }
-// loadout rules: any non-pistol gun as primary; pistol or MAC-10 as secondary
-export const PRIMARIES = ['m4a1', 'akm', 'mac10', 'shotgun', 'svd'];
-export const SECONDARIES = ['pistol', 'mac10'];
+// loadout rules: any long gun as primary; the M1911 as secondary
+export const PRIMARIES = ['m4a1', 'akm', 'shotgun', 'svd'];
+export const SECONDARIES = ['pistol'];

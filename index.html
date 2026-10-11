@@ -65,6 +65,8 @@
   </div>
   <div id="scope"><div class="lens"></div><div class="reticle"><i class="h"></i><i class="v"></i><i class="dot"></i><i class="m m1"></i><i class="m m2"></i><i class="m m3"></i></div></div>
   <div id="fps"></div>
+  <div id="vehbox" class="hidden"></div>
+  <div id="useprompt" class="hidden"></div>
   <div id="touch">
     <div id="touchzone"></div>
     <div id="joybase"><span class="jar u" data-icon="chevron"></span><span class="jar r" data-icon="chevron"></span><span class="jar d" data-icon="chevron"></span><span class="jar l" data-icon="chevron"></span><div id="joyknob"></div><div id="joylock"><span data-icon="lock"></span><small>SPRINT</small></div></div>
@@ -81,6 +83,7 @@
     <button id="tSwap" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
     <button id="tScore" class="tb small mponly" data-icon="list" aria-label="Scoreboard"></button>
     <button id="tChat" class="tb small mponly" data-icon="chat" aria-label="Quick chat"></button>
+    <button id="tUse" class="tb" data-icon="car" aria-label="Enter / exit vehicle"></button>
   </div>
 </div>
 <div id="tapsplash" class="hidden">
@@ -101,7 +104,7 @@
 </div>
 
 <div id="menu" class="screen hidden">
-  <div class="logo"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div><div class="ver">v1.3</div></div>
+  <div class="logo"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div><div class="ver">v1.4</div></div>
   <div class="mbuttons">
     <button id="btnPlay" class="mb primary"><span class="ic" data-icon="target"></span><span><b>PLAY SOLO</b><small>Survive endless waves</small></span></button>
     <button id="btnMP" class="mb"><span class="ic" data-icon="users"></span><span><b>MULTIPLAYER</b><small>Team DM · Free-for-all · Co-op</small></span></button>
@@ -197,6 +200,7 @@
     <div class="mpcards">
       <div class="card"><h3>HOST A ROOM</h3><p>Create a room and share the 5-letter code or link. Up to 8 players.</p><button id="btnHost" class="primary wide">CREATE ROOM</button></div>
       <div class="card"><h3>JOIN A ROOM</h3><p>Enter the room code from your friend.</p><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="btnJoin" class="primary wide">JOIN</button></div>
+      <div class="card"><h3>BOT MATCH</h3><p>Team Deathmatch or Free-for-all against AI bots. Works offline.</p><button id="btnBots" class="wide">PLAY VS BOTS</button></div>
     </div>
     <div id="mpstatus"></div>
     <div class="note">Peer-to-peer over WebRTC. The host's device runs the match. Room codes go through the free public PeerJS server.</div>
@@ -211,6 +215,8 @@
       <label>MODE <select id="lbMode"><option value="tdm">Team Deathmatch</option><option value="ffa">Free-for-all</option><option value="coop">Co-op Waves</option></select></label>
       <label>SCORE LIMIT <select id="lbScore"><option>15</option><option selected>30</option><option>50</option><option>75</option></select></label>
       <label>TIME LIMIT <select id="lbTime"><option value="180">3 min</option><option value="300" selected>5 min</option><option value="600">10 min</option></select></label>
+      <label>AI BOTS <select id="lbBots"><option value="0">None</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
+      <label>BOT SKILL <select id="lbDiff"><option value="easy">Recruit</option><option value="normal" selected>Regular</option><option value="hard">Veteran</option></select></label>
       <div id="lobbyInfo"></div>
       <button id="btnTeam" class="wide">SWITCH TEAM</button>
       <button id="btnReady" class="wide">READY</button>

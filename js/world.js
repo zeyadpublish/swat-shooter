@@ -2,6 +2,7 @@ import { asset } from './assets.js';
 // Procedural urban/industrial arena with PBR (Poly Haven CC0) materials and box colliders.
 import * as THREE from 'three';
 import { Box, NavGrid } from './physics.js';
+import { enterable } from './buildings.js';
 
 export const ARENA = 46;
 
@@ -86,9 +87,13 @@ export class World {
   }
   // ---------------------------------------------------------------- city assets
   async loadCity(gltfLoader) {
-    const files = ['modular_urban_apartments_facade', 'modular_factory_facade', 'street_lamp_01', 'street_lamp_02', 'fire_hydrant', 'metal_trash_can', 'concrete_road_barrier', 'concrete_road_barrier_02', 'covered_car', 'modular_fire_escape', 'rollershutter_door', 'exterior_aircon_unit', 'trashbag', 'old_tyre', 'sedan'];
+    const files = ['modular_urban_apartments_facade', 'modular_factory_facade', 'street_lamp_01', 'street_lamp_02', 'fire_hydrant', 'metal_trash_can', 'concrete_road_barrier', 'concrete_road_barrier_02', 'covered_car', 'rollershutter_door', 'exterior_aircon_unit', 'trashbag', 'old_tyre', 'sedan'];
     const res = await Promise.all(files.map(f => gltfLoader.loadAsync(asset('assets/city/' + f + '.glb'))));
     this.kits = {}; files.forEach((f, i) => { const sc = res[i].scene; sc.updateMatrixWorld(true); this.kits[f] = sc; });
+    // v1.4 CC0 props (Quaternius via Poly Pizza): sandbag trenches, burnt-out car, armoured vehicles
+    const props = ['sack_trench', 'sack_trench_small', 'broken_car', 'pickup_armored', 'truck_armored'];
+    const pr = await Promise.all(props.map(f => gltfLoader.loadAsync(asset('assets/props/' + f + '.glb'))));
+    props.forEach((f, i) => { const sc = pr[i].scene; sc.updateMatrixWorld(true); this.kits[f] = sc; sc.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; if (o.material.metalness > 0.5) o.material.metalness = 0.3; if (f === 'broken_car') { o.material.color.multiply(new THREE.Color(0x5e5650)); o.material.roughness = 0.95; } } }); }); // scorched wrecks
     // painted variants of the CC0 sedan (Innerscene)
     const paints = [0x7e1416, 0x1d3550, 0xa9adb2, 0x1b1c1e, 0xdcdad4, 0x3a4a3a];
     const sedan = this.kits.sedan; let bodyMat = null;
@@ -248,11 +253,18 @@ export class World {
       this.stripe(s > 0 ? 3 : -3, s * 10, 6, 0.4, white); this.stripe(s * 10, s > 0 ? -3 : 3, 0.4, 6, white);
     }
     // ------------- buildings: inner blocks
-    this.building(-27, -30, -9, -9, 4, 'apt', 1);
+    // v1.4: three enterable buildings (doors, windows, upper floor, roof access) + the facade blocks
+    enterable(this, { x0: -27, z0: -30, x1: -9, z1: -9, floors: 2, color: 0xf4e6cc,
+      doors: [{ side: 'e', at: -15.5 }, { side: 's', at: -22.5 }, { side: 'w', at: -19.5 }, { side: 'n', at: -13.5 }],
+      stairs: [{ x: -25.0, z: -27.2, dir: 'z+' }, { x: -10.0, z: -11.8, dir: 'z-' }], split: 'x', splitAt: -18, splitDoors: [-13.5, -24.5] });
     this.building(-45, -30, -30, -9, 6, 'fac', 2);
-    this.building(30, -45, 45, -33, 2, 'fac', 3);
+    enterable(this, { x0: 30, z0: -45, x1: 45, z1: -33, floors: 2, color: 0xe6e2da,
+      doors: [{ side: 's', at: 33.5 }, { side: 's', at: 41.5 }, { side: 'w', at: -38.5 }],
+      stairs: [{ x: 44.0, z: -43.4, dir: 'z+' }, { x: 31.4, z: -44.0, dir: 'x+' }], split: 'x', splitAt: 38, splitDoors: [-39.5] });
     this.building(9, 9, 33, 24, 5, 'apt', 4);
-    this.building(9, 33, 27, 45, 3, 'fac', 5);
+    enterable(this, { x0: 9, z0: 33, x1: 27, z1: 45, floors: 2, color: 0xf6dcc4,
+      doors: [{ side: 'w', at: 38.5 }, { side: 'n', at: 14.5 }, { side: 'n', at: 22.5 }],
+      stairs: [{ x: 25.6, z: 44.0, dir: 'x-' }, { x: 10.4, z: 44.0, dir: 'x+' }], split: 'x', splitAt: 18, splitDoors: [36.5, 41.5] });
     // perimeter ring (forms the arena boundary) and street arms (visual depth)
     let seed = 10;
     for (const s of [-1, 1]) {
@@ -311,10 +323,8 @@ export class World {
     // ------------- NW back courtyard + alley
     for (const [x, z, r] of [[-28.5, -12, 0], [-28.6, -18, 0.3], [-14, -33, 0.2], [-20, -42, 0], [-40, -33, 0]]) this.prop('metal_trash_can', '^metal_trash_can_rust|^metal_trash_can_rust_', x, z, r, { y: 0.15 });
     for (const [x, z] of [[-28.2, -14], [-29, -21], [-27.6, -24], [-13, -34], [-42, -35], [-41.2, -34.4]]) if (!this.lite) this.prop('trashbag', '.', x, z, Math.random() * 6, { y: 0.15, collide: false });
-    this.prop('rollershutter_door', 'graffiti', -18, -30.05, Math.PI, { y: 0.15, collide: false });
     this.prop('rollershutter_door', '^rollershutter_door$', -36, -30.05, Math.PI, { y: 0.15, collide: false });
-    this.prop('modular_fire_escape', '.', -27.1, -20, -Math.PI / 2, { y: 2.6, collide: false });
-    for (const [x, y, z, r] of [[-27.05, 4.2, -14, -Math.PI / 2], [-27.05, 7.2, -25, -Math.PI / 2], [-30, 5, -18, Math.PI / 2], [-20, 4.5, -30.05, Math.PI], [9, 4.6, 18, -Math.PI / 2]]) this.prop('exterior_aircon_unit', '^exterior_aircon_unit$', x, z, r, { y, collide: false });
+    for (const [x, y, z, r] of [[-30, 5, -18, Math.PI / 2], [9, 4.6, 18, -Math.PI / 2]]) this.prop('exterior_aircon_unit', '^exterior_aircon_unit$', x, z, r, { y, collide: false });
     this.crate(-16, -38); this.crate(-16, -39.3); this.crate(-16.1, -38.6, 1.1, 1.2, 0.3); this.crate(-34, -40, 1.2, 0.15);
     this.container(-36, -38, false, 0x9b3a2e, 0.15);
     this.jersey(-24, -36, true);
@@ -338,6 +348,19 @@ export class World {
     this.prop('rollershutter_door', '^rollershutter_door$', 33.05, 15, Math.PI / 2, { y: Y, collide: false });
     this.prop('rollershutter_door', 'graffiti', 20, 24.05, 0, { y: Y, collide: false });
     for (let k = 0; k < 4; k++) this.prop('concrete_road_barrier', 'concrete_road_barrier$', 13 + k * 1.6, 28.5, 0, { y: Y, kind: 'concrete' });
+
+    // ------------- v1.4 battlefield cover (all with colliders): sandbag trenches, burnt-out cars, barriers, crates
+    const sb = (x, z, r, small) => this.prop(small ? 'sack_trench_small' : 'sack_trench', '.', x, z, r, { y: x * x < 36 || z * z < 36 ? 0 : 0.15, kind: 'sand' });
+    sb(-3.2, -13, 0); sb(3.4, 13.5, Math.PI); sb(13, 3.2, Math.PI / 2); sb(-13.5, -3, -Math.PI / 2);
+    sb(1.2, -27, 0.1, true); sb(-1.5, 24, 0, true); sb(26, -1.2, Math.PI / 2, true); sb(-25, 1.4, Math.PI / 2, true);
+    sb(-20.5, -6.8, 0, true); sb(-12.5, -33, 0); sb(37, -30.5, 0, true); sb(18, 30.5, 0); sb(-6.8, -21.5, Math.PI / 2, true); sb(7.4, 35.2, Math.PI / 2, true);
+    const wreck = (x, z, r) => this.prop('broken_car', '.', x, z, r, { kind: 'metal' });
+    wreck(-2.3, -34.5, 0.35); wreck(2.8, 20, -0.5); wreck(33, 2.6, 1.9); wreck(-31, -2.2, 1.2);
+    this.jersey(3.5, -6.8, false, 0); this.jersey(-6.8, 4, true, 0); this.jersey(-3.2, 30, false, 0); this.jersey(30, -3.6, true, 0);
+    this.crate(4.6, -16.5, 1.1, 0, 0.2); this.crate(4.4, -15.4, 1.0, 0, 0.6); this.crate(-4.8, 16.2, 1.2, 0, 0.1); this.crate(-17, 4.8, 1.1, 0, 0.4);
+    this.crate(-15.5, -16, 1.2, 0.15, 0.2); this.crate(-23.5, -20, 1.1, 0.15, 0.5); this.crate(36, -41, 1.2, 0.15, 0.1); this.crate(20.5, 38, 1.1, 0.15, 0.3); this.crate(-20, -13.5, 1.0, 3.35, 0.2); this.crate(13, 41.5, 1.1, 3.35, 0.4);
+    this.container(-4.2, 41.5, false, 0x55603a, 0); // blocks half of the south road end
+    for (const [x, z, c] of [[5, -24, 0x6a7f94], [5.6, -24.4, 0x9e3b2c], [-5.2, 27.5, 0x3d5d3a]]) this.barrel(x, z, c, 0);
 
     this.finalizeInstances();
     this.nav = new NavGrid(this.boxes, ARENA, 1, 0.55);

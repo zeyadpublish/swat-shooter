@@ -76,6 +76,7 @@ export class TouchControls {
     btn($('tPause'), () => this.g.pause());
     // tap the ammo panel to reload
     btn($('tSwap'), () => this.g.player.cycle(1));
+    btn($('tUse'), () => { this.inp.usePressed = true; });
     // ammo panel: tap a weapon slot to switch, swipe left/right to cycle, tap elsewhere to reload
     const ab = $('ammobox'); let sw = null;
     ab.addEventListener('touchstart', (e) => {
@@ -94,7 +95,19 @@ export class TouchControls {
     document.addEventListener('gesturestart', (e) => e.preventDefault());
     addEventListener('contextmenu', (e) => e.preventDefault());
   }
-  isJoySide(x) { return this.g.settings.hand === 'left' ? x > innerWidth * 0.58 : x < innerWidth * 0.42; }
+  isJoySide(x) { return this.g.settings.hand === 'left' ? x > innerWidth * 0.6 : x < innerWidth * 0.4; }
+  // The stick only spawns in the movement zone: the outer ~40% on the stick side, below the radar strip,
+  // and never on top of a button or HUD panel (those keep their own touches).
+  inJoyZone(x, y) {
+    if (!this.isJoySide(x) || y < innerHeight * 0.3) return false;
+    const pad = 14 * this.ts;
+    for (const el of document.querySelectorAll('#touch .tb, #ammobox, #healthbox, #radarbox, #mpbar, #chatbox, #quickchat')) {
+      if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') continue;
+      const r = el.getBoundingClientRect(); if (!r.width) continue;
+      if (x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad) return false;
+    }
+    return true;
+  }
   setLock(on) {
     this.inp.sprintLock = on; this.base.classList.toggle('lock', on); this.base.classList.toggle('sprint', on);
     if (on) { Object.assign(this.inp.joy, { active: true, x: 0, y: -1 }); this.g.haptic(25); }
@@ -102,12 +115,14 @@ export class TouchControls {
   onStart(e) {
     e.preventDefault(); this.g.sfx.init();
     for (const t of e.changedTouches) {
-      if (this.isJoySide(t.clientX) && this.joyId === null) {
+      if (this.joyId === null && this.inJoyZone(t.clientX, t.clientY)) {
         if (this.inp.sprintLock) this.setLock(false); // touching the stick again cancels sprint lock
-        this.joyId = t.identifier; this.ox = t.clientX; this.oy = t.clientY;
+        // keep the whole ring on screen
+        const R = this.R + 8;
+        this.joyId = t.identifier; this.ox = Math.min(innerWidth - R, Math.max(R, t.clientX)); this.oy = Math.min(innerHeight - R, Math.max(R * 1.6, t.clientY));
         this.base.style.left = this.ox + 'px'; this.base.style.top = this.oy + 'px'; this.base.classList.add('on');
         this.setKnob(0, 0); this.inp.joy.active = true;
-      } else this.lookIds.set(t.identifier, { x: t.clientX, y: t.clientY });
+      } else if (!this.isJoySide(t.clientX)) this.lookIds.set(t.identifier, { x: t.clientX, y: t.clientY }); // right side: camera look only
     }
   }
   setKnob(dx, dy) {

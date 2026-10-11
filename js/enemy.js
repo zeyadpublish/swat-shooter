@@ -11,9 +11,9 @@ export class Enemy {
     this.burst = 0; this.shotT = 0; this.tactic = 'hold'; this.tacticT = 0; this.strafeDir = 1; this.idleT = 0; this.crouch = false;
     this.accuracy = Math.min(0.62, 0.3 + wave * 0.04); this.dmg = Math.min(15, 7 + wave);
     // enemies carry one of the automatic weapons
-    const r = Math.random(); this.gunId = r < 0.45 ? 'm4a1' : r < 0.8 ? 'akm' : 'mac10'; char.setGun(this.gunId);
-    this.sound = this.gunId === 'akm' ? 'ak' : this.gunId === 'mac10' ? 'smg' : 'rifle';
-    if (this.gunId === 'mac10') this.dmg *= 0.75; else if (this.gunId === 'akm') this.dmg *= 1.12;
+    this.gunId = Math.random() < 0.55 ? 'm4a1' : 'akm'; char.setGun(this.gunId);
+    this.sound = this.gunId === 'akm' ? 'ak' : 'rifle';
+    if (this.gunId === 'akm') this.dmg *= 1.12;
     this.c.yaw = Math.atan2(-(0 - pos.x), -(0 - pos.z));
     this.c.root.position.copy(this.pos); this.lastPhase = 0;
     this.c.play('idle', { fade: 0 });
@@ -34,7 +34,7 @@ export class Enemy {
   update(dt) {
     const g = this.g, p = this.player;
     if (this.dead) {
-      this.deadT += dt; if (this.deadT > 9) this.c.root.position.y -= dt * 0.25;
+      this.deadT += dt; if (this.deadT > 6) this.c.root.position.y -= dt * 0.45; // bodies sink away after ~6 s
       this.c.update(dt); return;
     }
     const toP = p.pos.clone().sub(this.pos); const dist = Math.hypot(toP.x, toP.z);
@@ -44,7 +44,7 @@ export class Enemy {
       this.percT = 0.2;
       const fw = fwdVec(this.c.yaw); const dirP = toP.clone().setY(0).normalize();
       const inFov = fw.dot(dirP) > -0.1 || dist < 7 || this.alerted;
-      this.canSee = !p.dead && dist < 55 && inFov && lineOfSight(g.world.boxes, this.head(), p.chest());
+      this.canSee = !p.dead && dist < 55 && inFov && lineOfSight(p.vehicle ? g.world.boxes.filter(b => b.owner !== p.vehicle) : g.world.boxes, this.head(), p.chest());
       if (this.canSee) { if (!this.alerted) this.alerted = true; if (g.time - this.lastSeen > 2) this.react = Math.max(0.35, 0.95 - this.wave * 0.06) + Math.random() * 0.3; this.lastSeen = g.time; }
     }
     let speed = 0, anim = 'idle', animTS = 1;
@@ -74,7 +74,7 @@ export class Enemy {
       this.react -= dt; this.shotT -= dt;
       if (this.canSee && this.react <= 0 && this.shotT <= 0) {
         if (this.burst <= 0) { this.burst = 3 + (Math.random() * 4 | 0); this.shotT = 0; }
-        this.shoot(dist); this.burst--; this.shotT = this.burst > 0 ? (this.gunId === 'mac10' ? 0.07 : 0.11) + Math.random() * 0.04 : 0.7 + Math.random() * 1.1;
+        this.shoot(dist); this.burst--; this.shotT = this.burst > 0 ? 0.11 + Math.random() * 0.04 : 0.7 + Math.random() * 1.1;
       }
       const dy = p.chest().y - this.head().y; this.c.aimPitch += (Math.atan2(dy, dist) * 0.95 - this.c.aimPitch) * Math.min(1, dt * 8);
     } else {
@@ -103,6 +103,7 @@ export class Enemy {
     const dpx = this.pos.x - p.pos.x, dpz = this.pos.z - p.pos.z, dp2 = dpx * dpx + dpz * dpz;
     if (dp2 < 0.6 && dp2 > 1e-6) { const d = Math.sqrt(dp2); this.pos.x += dpx / d * (0.78 - d); this.pos.z += dpz / d * (0.78 - d); }
     this.pos.y = groundHeight(g.world.boxes, this.pos, this.radius, 0.45);
+    this.c.upperTarget = this.state === 'engage' && speed > 0 ? 1 : 0; this.c.upperName = 'idle aiming';
     this.c.play(anim, { fade: 0.25, sync: /^(walk|run)/.test(this.c.currentName) && /^(walk|run)/.test(anim), timeScale: animTS });
     if (speed > 0 && dist < 22) { const ph = this.c.phase(); if ((this.lastPhase < 0.5 && ph >= 0.5) || ph < this.lastPhase) g.sfx.step(this.pos, 0.1); this.lastPhase = ph; }
     this.c.root.position.copy(this.pos);
@@ -120,11 +121,12 @@ export class Enemy {
     const dir = target.clone().sub(muzzle).normalize();
     const wh = raycastBoxes(g.world.boxes, muzzle, dir, 200);
     const dT = muzzle.distanceTo(target);
-    g.fx.muzzleFlash(this.c.muzzle, dir, false, 0.9);
+    g.fx.muzzleFlash(this.c.muzzle, dir, false, 0.9); this.c.kick(0.7); g.fx.shell(this.c);
     g.sfx.gunshot(muzzle, 0.85, this.sound);
     if (g.mp) g.mp.enemyFx(this, muzzle, wh && wh.t < dT + 2 ? wh.point : target.clone().addScaledVector(dir, 30));
     if (wh && wh.t < dT - 0.1) { // blocked by cover
       g.fx.tracer(muzzle, wh.point, true); g.fx.impact(wh.point, wh.normal, wh.box.mat); g.sfx.impact(wh.point, wh.box.mat);
+      if (wh.box.owner && wh.box.owner.damage) wh.box.owner.damage(this.dmg * 0.6, null);
       return;
     }
     if (hit) { g.fx.tracer(muzzle, chest, true); p.damage(this.dmg * (0.85 + Math.random() * 0.3), this.pos.clone()); }
