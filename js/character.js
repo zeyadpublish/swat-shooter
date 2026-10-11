@@ -16,7 +16,7 @@ export function dirIndexFromInput(strafe, fwd) { // strafe +right, fwd +forward
 }
 
 // Guns (see weapons.js). The outer group's origin is the grip point so it can be parented straight onto the right-hand bone.
-function buildGun(template, def) {
+export function buildGun(template, def) {
   const outer = new THREE.Group(); const inner = template.clone(true); inner.position.fromArray(def.grip).negate(); outer.add(inner);
   inner.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const muzzle = new THREE.Object3D(); muzzle.position.fromArray(def.muzzle); inner.add(muzzle);

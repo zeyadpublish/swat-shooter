@@ -22,6 +22,10 @@ export const ICONS = {
   star: S(`<path fill="currentColor" d="M12 2.2l2.9 6.3 6.8.7-5.1 4.6 1.5 6.8L12 17.2l-6.1 3.4 1.5-6.8L2.3 9.2l6.8-.7z"/>`),
   headshot: S(`<circle cx="12" cy="9.2" r="5" fill="currentColor"/><path fill="currentColor" d="M3.5 22c.3-4.2 3.9-6.6 8.5-6.6s8.2 2.4 8.5 6.6z"/><g fill="none" stroke="#ff3b30" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="9.2" r="7.2" stroke-width="1.6"/><path d="M12 .8v3.4M12 14.2v3.4M3.6 9.2H7M17 9.2h3.4"/></g>`),
   swap: S(`<path d="M4 9h13.5M14 5.5L17.5 9 14 12.5M20 15H6.5M10 11.5L6.5 15 10 18.5" ${st} stroke-width="2.3"/>`),
+  exit: S(`<path d="M14 4h5v16h-5" ${st} stroke-width="2.2"/><path d="M3.5 12h11M10.5 7.5 15 12l-4.5 4.5" ${st} stroke-width="2.4"/>`),
+  users: S(`<circle cx="9" cy="8" r="3.4" fill="currentColor"/><path d="M2.5 20c.4-4 3-6 6.5-6s6.1 2 6.5 6z" fill="currentColor"/><circle cx="17" cy="9" r="2.6" fill="currentColor" opacity=".7"/><path d="M15.5 13.6c3.2-.4 5.7 1.4 6 5.4h-4.6" fill="currentColor" opacity=".7"/>`),
+  list: S(`<path d="M8 6.5h12M8 12h12M8 17.5h12" ${st} stroke-width="2.4"/><circle cx="4" cy="6.5" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="17.5" r="1.5" fill="currentColor"/>`),
+  chat: S(`<path d="M4 5.5h16v10H10l-4.5 3.8V15.5H4z" ${st} stroke-width="2.2" stroke-linejoin="round"/><path d="M8 9.5h8M8 12.5h5" ${st} stroke-width="1.8"/>`),
   chevron: S(`<path d="M7 14.5l5-5 5 5" ${st} stroke-width="2.6"/>`),
 };
 export const icon = (name, cls = '') => `<i class="ico ${cls}">${ICONS[name]}</i>`;

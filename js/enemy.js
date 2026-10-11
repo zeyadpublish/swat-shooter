@@ -18,7 +18,8 @@ export class Enemy {
     this.c.root.position.copy(this.pos); this.lastPhase = 0;
     this.c.play('idle', { fade: 0 });
   }
-  get player() { return this.g.player; }
+  // co-op multiplayer: hunt the nearest operator
+  get player() { const mp = this.g.mp; return mp && mp.active && mp.mode === 'coop' ? mp.coopTarget(this) : this.g.player; }
   head() { return this.pos.clone().add(new THREE.Vector3(0, this.crouch ? 1.05 : 1.55, 0)); }
   alert() { if (!this.dead && !this.alerted) { this.alerted = true; if (this.state === 'patrol') { this.state = 'chase'; this.path = null; } } }
   follow(dt, speed) {
@@ -121,6 +122,7 @@ export class Enemy {
     const dT = muzzle.distanceTo(target);
     g.fx.muzzleFlash(this.c.muzzle, dir, false, 0.9);
     g.sfx.gunshot(muzzle, 0.85, this.sound);
+    if (g.mp) g.mp.enemyFx(this, muzzle, wh && wh.t < dT + 2 ? wh.point : target.clone().addScaledVector(dir, 30));
     if (wh && wh.t < dT - 0.1) { // blocked by cover
       g.fx.tracer(muzzle, wh.point, true); g.fx.impact(wh.point, wh.normal, wh.box.mat); g.sfx.impact(wh.point, wh.box.mat);
       return;

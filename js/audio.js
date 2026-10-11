@@ -1,6 +1,6 @@
 // Synthesised WebAudio sound effects (no audio files).
 export class Sfx {
-  constructor() { this.ctx = null; this.volume = 0.8; }
+  constructor() { this.ctx = null; this.volume = 0.8; this.fxVol = 1; this.uiVol = 0.8; }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -8,6 +8,9 @@ export class Sfx {
     this.master = ctx.createGain(); this.master.gain.value = this.volume;
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
     this.master.connect(comp); comp.connect(ctx.destination);
+    // buses: game effects and interface sounds, each with its own volume
+    this.fxBus = ctx.createGain(); this.fxBus.gain.value = this.fxVol; this.fxBus.connect(this.master);
+    this.uiBus = ctx.createGain(); this.uiBus.gain.value = this.uiVol; this.uiBus.connect(this.master);
     // noise buffer
     const len = ctx.sampleRate * 2; this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -15,14 +18,36 @@ export class Sfx {
     const ir = ctx.createBuffer(2, ctx.sampleRate * 1.6, ctx.sampleRate);
     for (let c = 0; c < 2; c++) { const b = ir.getChannelData(c); for (let i = 0; i < b.length; i++) { const t = i / ctx.sampleRate; b[i] = (Math.random() * 2 - 1) * Math.pow(1 - t / 1.6, 3) * (t > 0.06 && t < 0.09 ? 2.2 : 0.6); } }
     this.verb = ctx.createConvolver(); this.verb.buffer = ir; this.verbGain = ctx.createGain(); this.verbGain.gain.value = 0.35;
-    this.verb.connect(this.verbGain); this.verbGain.connect(this.master);
+    this.verb.connect(this.verbGain); this.verbGain.connect(this.fxBus);
     this.ambient();
   }
-  setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
+  setVolume(v, fx = this.fxVol, ui = this.uiVol) {
+    this.volume = v; this.fxVol = fx; this.uiVol = ui;
+    if (this.master) { this.master.gain.value = v; this.fxBus.gain.value = fx; this.uiBus.gain.value = ui; }
+  }
+  // ---- interface sounds (menu hover / press / back, kill streak sting, heartbeat)
+  ui(kind = 'press') {
+    if (!this.ctx) return; const t = this.ctx.currentTime, o = this.ctx.createGain(); o.connect(this.uiBus);
+    if (kind === 'hover') { this.tone(o, t, 1900, 2100, 0.04, 0.05, 'sine'); }
+    else if (kind === 'back') { this.tone(o, t, 900, 520, 0.09, 0.12, 'triangle'); }
+    else if (kind === 'select') { this.tone(o, t, 700, 700, 0.06, 0.12, 'triangle'); this.tone(o, t + 0.06, 1050, 1050, 0.1, 0.12, 'triangle'); }
+    else if (kind === 'notify') { this.tone(o, t, 880, 880, 0.08, 0.1, 'sine'); this.tone(o, t + 0.09, 1320, 1320, 0.12, 0.1, 'sine'); }
+    else { this.tone(o, t, 1300, 900, 0.05, 0.14, 'triangle'); this.noiseBurst(o, t, { type: 'bandpass', freq: 3200, q: 3, gain: 0.12, decay: 0.03 }); }
+  }
+  streak(level = 1) {
+    if (!this.ctx) return; const t = this.ctx.currentTime, o = this.ctx.createGain(); o.connect(this.uiBus);
+    const base = 440 * Math.pow(1.12, level);
+    [0, 0.08, 0.16].forEach((d, i) => this.tone(o, t + d, base * [1, 1.25, 1.5][i], base * [1, 1.25, 1.5][i], 0.22, 0.12, 'sawtooth'));
+    this.noiseBurst(o, t, { type: 'lowpass', freq: 300, gain: 0.5, decay: 0.3 });
+  }
+  heartbeat() {
+    if (!this.ctx) return; const t = this.ctx.currentTime, o = this.ctx.createGain(); o.connect(this.uiBus); o.gain.value = 1.4;
+    this.tone(o, t, 62, 40, 0.14, 0.9); this.tone(o, t + 0.2, 55, 36, 0.16, 0.7);
+  }
   out(pos) {
     const ctx = this.ctx; const g = ctx.createGain();
-    if (pos) { const p = ctx.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.1; p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; g.connect(p); p.connect(this.master); p.connect(this.verb); }
-    else { g.connect(this.master); g.connect(this.verb); }
+    if (pos) { const p = ctx.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.1; p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; g.connect(p); p.connect(this.fxBus); p.connect(this.verb); }
+    else { g.connect(this.fxBus); g.connect(this.verb); }
     return g;
   }
   noiseBurst(dest, t, { type = 'bandpass', freq = 1000, q = 1, gain = 1, attack = 0.001, decay = 0.1, offset = 0 } = {}) {
@@ -65,7 +90,7 @@ export class Sfx {
     const ctx = this.ctx; const s = ctx.createBufferSource(); s.buffer = this.noise; s.loop = true;
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 350;
     const g = ctx.createGain(); g.gain.value = 0.05; const lfo = ctx.createOscillator(); lfo.frequency.value = 0.08; const lg = ctx.createGain(); lg.gain.value = 0.03;
-    lfo.connect(lg); lg.connect(g.gain); s.connect(f); f.connect(g); g.connect(this.master); s.start(); lfo.start();
+    lfo.connect(lg); lg.connect(g.gain); s.connect(f); f.connect(g); g.connect(this.fxBus); s.start(); lfo.start();
   }
   listener(cam) {
     if (!this.ctx) return; const L = this.ctx.listener; const p = cam.position; const f = cam.getWorldDirection(this._f || (this._f = cam.position.clone()));

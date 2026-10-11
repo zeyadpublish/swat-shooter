@@ -43,7 +43,9 @@ Phones and tablets opening the site load the light asset set in `assets-mobile/`
 | C / Left Ctrl | Crouch (C toggles, Ctrl is hold). Note: Ctrl+W closes a browser tab, so C is safer |
 | Space | Jump (jump up, loop and land animations) |
 | R | Reload |
-| 1 – 6 / mouse wheel | Select weapon |
+| 1 – 2 / mouse wheel | Select weapon (1 – 6 with Settings → Gameplay → All weapons) |
+| Tab (hold) | Multiplayer scoreboard |
+| Enter / T | Multiplayer chat |
 | Q | Previous (last used) weapon |
 | V | Swap shoulder |
 | Esc / P | Pause |
@@ -87,7 +89,8 @@ Legs take 75–80% damage. Enemies have 100 HP. They carry an M4A1, AKM or MAC-1
 - **Ammo crates:** killed enemies drop a glowing ammo crate 70% of the time. Crates show as yellow squares on the radar and last 30 s. Walk over one to refill every weapon's reserve, with double for the gun in hand. Clearing a wave also gives ammo.
 - **Kill feed:** shows the weapon used.
 - **Sounds:** each weapon has its own synthesized gunshot (crack/body/boom layers). The shotgun adds a pump, the SVD a bolt.
-- **Limitations:** there is no weapon pickup (all six guns are carried from the start). The pistol and SMG reuse the rifle pose: the left hand stays where a rifle's handguard would be. Reloads are procedural tilts, not hand animations.
+- **Loadout:** you carry one primary (M4A1, AKM, MAC-10, shotgun or SVD) and one secondary (M1911 or MAC-10), chosen on the LOADOUT screen. Heavier guns move slightly slower. Settings → Gameplay → All weapons gives the old six-gun bar in solo play.
+- **Limitations:** there is no weapon pickup. The pistol and SMG reuse the rifle pose: the left hand stays where a rifle's handguard would be. Reloads are procedural tilts, not hand animations.
 
 ## Features
 - **Soldier:** `Swat.fbx` and all its animation FBX files are converted into one GLB (`assets/swat.glb`) with 49 clips. Root motion is removed from locomotion so the clips play in place, and an AnimationMixer crossfades between them. Walk/run/sprint/crouch clips are chosen by movement direction and stay phase-synced when switching. There are idle/aim/crouch-aim poses and turn-in-place (90° clips). Upper-body aim pitch is added procedurally on the spine.
@@ -100,11 +103,57 @@ Legs take 75–80% damage. Enemies have 100 HP. They carry an M4A1, AKM or MAC-1
 - **HUD:** a rotating radar (city map, player arrow, enemy red dots), and icon chips for wave, hostiles, kills and score. The health bar has 10 segments and a cross icon. The ammo panel shows the current gun's silhouette rendered from the in-game model, the mag and reserve counts, one bullet icon per round that empties as you fire, and the weapon slot bar; low ammo flashes red. Kill feed reads "YOU [rifle] [headshot] HOSTILE". The crosshair widens with movement and firing and tightens while aiming. Hit markers are white, yellow on a headshot and a red X on a kill. Red arcs show where damage comes from, and the screen edges turn red when hit. All icons are original inline SVG drawn for this game.
 - **Game loop:** waves, score, kill feed, health regeneration, damage-direction indicators. Main menu, pause, game over and restart. Sound effects are synthesized with WebAudio (shots, reverb, reload, footsteps, impacts, near-miss whiz).
 
+## Menus and UI (v1.3)
+- **Main menu:** the live 3D city is the backdrop (depth-of-field blur and vignette on desktop) behind your operator, with PLAY SOLO, MULTIPLAYER, LOADOUT and SETTINGS. The loading screen shows real progress and gameplay tips. Fonts are Rajdhani and Teko, bundled in `assets/fonts/`.
+- **Loadout:** a rotating, lit 3D preview of each gun, with stat bars for damage, fire rate, range, mobility and magazine, and PRIMARY / SECONDARY tabs.
+- **Settings:** four tabs, all saved in the browser (localStorage):
+  - Graphics: quality, resolution, FOV, FPS counter.
+  - Controls: sensitivity, ADS sensitivity, invert Y, handedness, button opacity, vibration, and a touch-layout editor where you drag buttons and resize them with the slider.
+  - Audio: master, effects and UI volume.
+  - Gameplay: name, crosshair style, damage numbers, +XP popups, all weapons.
+- **HUD extras:**
+  - Animated counters and a weapon-swap animation.
+  - Multi-kill and streak banners (DOUBLE / TRIPLE / MULTI KILL, KILLING SPREE, UNSTOPPABLE, GODLIKE).
+  - +XP popups, optional damage numbers, and a heartbeat sound below 30 HP.
+  - Wave cards.
+- **Pause and end screens:** a redesigned pause menu. The end screen shows wave, kills, headshots, accuracy, best streak and score.
+
+## Multiplayer (peer-to-peer)
+MULTIPLAYER → enter a name → **HOST ROOM** creates a 5-character room code. Share it with the COPY or SHARE button; the link adds `?room=CODE` and joins directly. Friends can also type the code and press **JOIN**.
+
+- **Lobby:** up to 8 players, each with a ready check. The host picks the mode, score limit and time limit and presses START.
+- **Modes:**
+  - **Team Deathmatch:** blue vs red, first team to the score limit wins.
+  - **Free-for-all:** every player for themselves.
+  - **Co-op:** survive the waves together; the round ends when the whole squad is down.
+- **In a match:**
+  - Nameplates over other players and a kill feed with names.
+  - Respawn after 3 s with brief spawn protection.
+  - Scoreboard: hold Tab, or use the list button on phones.
+  - Timer and score at the top.
+  - Chat: Enter or T on desktop; quick-chat presets on phones.
+- **Leaving:**
+  - If a player leaves, the others see it in chat and play continues.
+  - If the host leaves, the room closes and everyone returns to the menu.
+- **How it works:**
+  - **Connection:** browsers connect directly over WebRTC data channels using PeerJS (`libs/peerjs`, loaded only when you open Multiplayer). The free public PeerJS broker (0.peerjs.com) introduces the players to each other, and Google's public STUN server helps them find a route.
+  - **Who decides what:** the host's browser runs the match. It owns health, hits, kills, scores, the timer and, in co-op, the AI enemies.
+  - **Sync:** state is sent 20 times a second, and remote players are interpolated 100 ms behind.
+  - **Hit checks:** before accepting a hit, the host checks rate of fire, where the shot came from, line of sight and where the target was a moment ago (simple lag compensation).
+- **Limitations:**
+  - **No TURN relay:** players behind symmetric NAT or networks that block UDP (some mobile carriers, corporate Wi-Fi) may not be able to connect.
+  - **Depends on the public broker:** this is a free service with no uptime guarantee. To use your own [PeerServer](https://github.com/peers/peerjs-server), add `?peerhost=HOST&peerport=443&peerpath=/&peersecure=1&peerkey=KEY` to the URL.
+  - **Cheating is possible:** movement is trusted from each client. Hits are checked by the host, but a modified host can cheat.
+  - **Host tab:** the host's tab must stay in the foreground, because browsers throttle background tabs.
+  - **Co-op joins:** in co-op, players who join mid-match come in at the next wave.
+- **Testing aid:** `?relay=ws://127.0.0.1:PORT` swaps WebRTC for a local WebSocket relay (`tools/relay.mjs`). It is used for automated tests and only accepts localhost addresses.
+
 ## Folder layout
 ```
 index.html, style.css
-js/       main.js (game/renderer/UI), world.js (city + colliders), character.js, player.js, enemy.js, physics.js, fx.js, audio.js
-libs/     three.js r170 + the addons it uses (MIT)
+js/       main.js (game/renderer/HUD), ui.js (menus/settings/loadout), mp.js (multiplayer), net.js (PeerJS wrapper), world.js (city + colliders), character.js, player.js, enemy.js, physics.js, fx.js, audio.js
+libs/     three.js r170 + the addons it uses (MIT), peerjs 1.5.5 (MIT)
+assets/fonts/  Rajdhani, Teko (SIL OFL 1.1)
 assets/   swat.glb, m4a1.glb, city/*.glb (meshopt-compressed, WebP textures), tex/*.webp, hdr/*.hdr
 start-windows.bat, start-mac-linux.sh   local launchers
 ```
@@ -122,3 +171,5 @@ start-windows.bat, start-mac-linux.sh   local launchers
 - **Sedan:** "Sedan car" by Innerscene (https://www.innerscene.com/tools/library/3d-parts/sedan-car-42109739), **CC0**. Repainted in code into six colours.
 - **HDRI:** Poly Haven, "Kloofendal 48d Partly Cloudy (Pure Sky)", **CC0**.
 - **Three.js:** MIT license (`libs/three/LICENSE`).
+- **PeerJS:** MIT license (`libs/peerjs/LICENSE`).
+- **Fonts:** Rajdhani (Indian Type Foundry) and Teko (The Teko Project Authors), SIL Open Font License 1.1 (`assets/fonts/OFL-*.txt`).

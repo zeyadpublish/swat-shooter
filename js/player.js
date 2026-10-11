@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { resolveCircle, groundHeight, raycastBoxes, raySphere, rayCapsule } from './physics.js';
 import { GAIT_SPEED, locoClip, dirIndexFromInput } from './character.js';
-import { WEAPONS, falloff } from './weapons.js';
+import { WEAPONS, WEAPON_BY_ID, falloff } from './weapons.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 export const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
@@ -16,13 +16,19 @@ export class Player {
   reset(spawn) {
     this.pos = spawn.clone(); this.vel = new THREE.Vector3(); this.yaw = 0; this.pitch = -0.05; this.c.yaw = 0;
     this.health = 100; this.reloading = 0; this.cool = 0; this.bloom = 0;
-    this.slots = WEAPONS.map(w => ({ w, mag: w.mag, reserve: w.reserve })); this.wi = 0; this.lastWi = 1; this.switchT = 0; this.pendingWi = -1; this.triggerUp = true;
+    const ids = this.g.loadoutIds ? this.g.loadoutIds() : WEAPONS.map(w => w.id);
+    this.slots = ids.map(id => WEAPON_BY_ID[id]).map(w => ({ w, mag: w.mag, reserve: w.reserve })); this.wi = 0; this.lastWi = 1; this.switchT = 0; this.pendingWi = -1; this.triggerUp = true;
     this.c.setGun(this.slots[0].w.id);
     this.crouch = false; this.crouchToggle = false; this.aiming = false; this.grounded = true; this.airTime = 0; this.jumpPhase = null; this.landTimer = 0;
     this.lastHurt = -99; this.dead = false; this.deadTime = 0; this.fireRecent = 0; this.turning = null; this.recoil = 0; this.moving = false; this.sprint = false;
     this.shots = 0; this.hits = 0; this.headshots = 0; this.emptyClicked = false; this.lastPhase = 0;
     this.c.root.position.copy(this.pos); this.c.aimPitch = 0; this.c.gun.visible = true;
     this.c.play('idle', { fade: 0 });
+  }
+  // multiplayer respawn: fresh health/ammo at a new spot, keep the match stats
+  respawn(spawn, yaw = 0) {
+    const keep = { shots: this.shots, hits: this.hits, headshots: this.headshots };
+    this.reset(spawn); Object.assign(this, keep); this.yaw = yaw; this.c.yaw = yaw; this.c.root.visible = true; this.g.hud.weaponChanged();
   }
   get slot() { return this.slots[this.wi]; }
   get weapon() { return this.slots[this.wi].w; }
@@ -63,7 +69,7 @@ export class Player {
     this.aiming = !!inp.aim;
     this.sprint = !!(k.ShiftLeft || k.ShiftRight || inp.sprintToggle || inp.sprintLock) && this.moving && !slow && !this.aiming && !this.crouch && !inp.fire;
     const gait = this.crouch ? 'crouch' : (this.aiming || slow) ? 'walk' : this.sprint ? 'sprint' : 'run';
-    const speed = GAIT_SPEED[gait] * (gait === 'crouch' ? 0.85 : 1);
+    const speed = GAIT_SPEED[gait] * (gait === 'crouch' ? 0.85 : 1) * (0.9 + 0.1 * (this.weapon.mob ?? 1));
     // ---- horizontal movement
     const wish = new THREE.Vector3();
     if (this.moving) wish.addScaledVector(fwdVec(this.yaw), f).addScaledVector(rightVec(this.yaw), s).normalize().multiplyScalar(speed);
@@ -191,7 +197,8 @@ export class Player {
     const o = origin.clone().addScaledVector(dir, tStart);
     const wh = raycastBoxes(g.world.boxes, o, dir, 300);
     let best = wh ? wh.t : 300, hitEnemy = null, part = null;
-    for (const e of g.enemies) {
+    const targets = g.mp && g.mp.active ? g.mp.targets() : g.enemies;
+    for (const e of targets) {
       if (e.dead) continue;
       if (e.pos.distanceToSquared(o) > (best + 2) * (best + 2)) continue;
       const hb = e.c.hitboxes();
@@ -209,24 +216,25 @@ export class Player {
     const mb = raycastBoxes(g.world.boxes, muzzle, md, Math.max(0, ml - 0.05));
     let normal = wh && !hitEnemy ? wh.normal : null, kind = wh ? wh.box.mat : 'concrete';
     if (mb) { point = mb.point; normal = mb.normal; kind = mb.box.mat; hitEnemy = null; }
-    return { point, normal, kind, enemy: hitEnemy, part, dist: tStart + best, muzzle, md };
+    return { point, normal, kind, enemy: hitEnemy, part, dist: tStart + best, muzzle, md, o };
   }
   shoot() {
     const g = this.g, cam = g.camera, W = this.weapon;
     this.cool = W.cool; this.mag--; this.fireRecent = 0.6; this.shots++;
     const aim = cam.getWorldDirection(new THREE.Vector3());
     const sp = Math.max(0, this.spread());
-    const hits = new Map(); let firstMd = null, anyHit = false;
+    const hits = new Map(), pellets = [], ends = []; let firstMd = null, anyHit = false, muzzle = null;
     for (let k = 0; k < W.pellets; k++) {
       const dir = aim.clone();
       const rnd = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(sp * Math.sqrt(Math.random()) * 2);
       dir.add(rnd).normalize();
-      const r = this.trace(dir); if (!firstMd) firstMd = r.md;
-      if (k < 4) g.fx.tracer(r.muzzle, r.point, false);
+      const r = this.trace(dir); if (!firstMd) { firstMd = r.md; muzzle = r.muzzle; this.lastO = r.o; }
+      if (k < 4) { g.fx.tracer(r.muzzle, r.point, false); ends.push(r.point); }
       if (r.enemy) {
         const mul = (r.part === 'head' ? W.head : r.part === 'legs' ? W.legs : 1) * falloff(W, r.dist);
         const h = hits.get(r.enemy) || { dmg: 0, head: false, dir, point: r.point };
         h.dmg += W.dmg * mul; h.head = h.head || r.part === 'head'; hits.set(r.enemy, h);
+        pellets.push({ t: r.enemy, part: r.part, pt: r.point, dist: r.dist });
         if (k < 3 || W.pellets === 1) g.fx.blood(r.point, dir);
       } else if (r.normal) {
         if (k < 5) { g.fx.impact(r.point, r.normal, r.kind); if (k === 0) g.sfx.impact(r.point, r.kind); }
@@ -240,8 +248,14 @@ export class Player {
     if (W.pump) { this.pumpT = 0.45; setTimeout(() => g.fx.shell(this.c), 380); } else g.fx.shell(this.c);
     g.sfx.gunshot(null, 1, W.sound); g.haptic(W.pellets > 1 || W.scope ? 30 : 9);
     g.alert(this.pos, W.sound === 'pistol' || W.sound === 'smg' ? 32 : 45);
+    if (g.mp && g.mp.active) { // multiplayer: the host decides what the bullets did
+      for (const [, h] of hits) { this.hits++; if (h.head) this.headshots++; }
+      if (hits.size) g.haptic(18);
+      g.mp.localShot(W, this.lastO, muzzle, ends, hits, pellets); return;
+    }
     for (const [e, h] of hits) {
       this.hits++; if (h.head) this.headshots++;
+      g.hud.damageNumber(h.point, h.dmg, h.head);
       e.damage(h.dmg, h.dir, h.head);
       g.hud.hitmarker(h.head, e.dead); g.sfx.hit(h.head); g.haptic(e.dead ? [30, 40, 50] : 18); anyHit = true;
     }

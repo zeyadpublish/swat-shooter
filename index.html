@@ -13,12 +13,13 @@
 <link rel="icon" type="image/png" href="assets/ui/icon-192.png">
 <link rel="apple-touch-icon" href="assets/ui/apple-touch-icon.png">
 <title>SWAT: Urban Siege</title>
+<link rel="preload" href="assets/fonts/rajdhani-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/teko-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">{"imports":{"three":"./libs/three/three.module.js","three/addons/":"./libs/three/addons/"}}</script>
 </head>
 <body>
 <canvas id="c"></canvas>
-
 <div id="hud" class="hidden">
   <div id="vignette"></div>
   <div id="dmgdirs"></div>
@@ -34,6 +35,17 @@
     </div>
   </div>
   <div id="killfeed"></div>
+  <div id="mpbar" class="hidden"><div class="team blue"><b id="scoreA">0</b><small id="nameA">BLUE</small></div><div id="mptimer">10:00</div><div class="team red"><b id="scoreB">0</b><small id="nameB">RED</small></div></div>
+  <div id="nameplates"></div>
+  <div id="popups"></div>
+  <div id="streak"></div>
+  <div id="wavecard" class="hidden"></div>
+  <div id="protect" class="hidden"><span data-icon="shield"></span>SPAWN PROTECTION</div>
+  <div id="respawn" class="hidden"><small>YOU WERE ELIMINATED BY</small><b id="killedby">—</b><div>RESPAWN IN <span id="respawnT">3</span></div></div>
+  <div id="chatlog"></div>
+  <div id="chatbox" class="hidden"><span>SAY:</span><input id="chatin" maxlength="80" autocomplete="off" placeholder="Type a message, Enter to send"></div>
+  <div id="quickchat" class="hidden"></div>
+  <div id="scoreboard" class="hidden"></div>
   <div id="banner"></div>
   <div id="healthbox">
     <span class="hpicon" data-icon="cross"></span>
@@ -67,10 +79,12 @@
     </div>
     <button id="tPause" class="tb small" data-icon="gear" aria-label="Pause / settings"></button>
     <button id="tSwap" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
+    <button id="tScore" class="tb small mponly" data-icon="list" aria-label="Scoreboard"></button>
+    <button id="tChat" class="tb small mponly" data-icon="chat" aria-label="Quick chat"></button>
   </div>
 </div>
 <div id="tapsplash" class="hidden">
-  <div class="title">SWAT<span>URBAN SIEGE</span></div>
+  <div class="logo big"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div></div>
   <div class="tap">TAP TO PLAY</div>
   <div id="ioshint" class="hidden">For true fullscreen on iPhone: tap <b>Share</b> &rarr; <b>Add to Home Screen</b>, then open SWAT Siege from your home screen.</div>
   <div class="sub">Best in landscape &middot; headphones recommended</div>
@@ -78,85 +92,134 @@
 <div id="rotate"><div>&#8635;</div>Rotate your device to landscape</div>
 
 <div id="loading" class="screen">
-  <div class="title">SWAT<span>URBAN SIEGE</span></div>
-  <div class="loadbar"><div id="loadfill"></div></div>
-  <div id="loadtxt">Loading assets…</div>
+  <div class="logo big"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div></div>
+  <div class="loadwrap">
+    <div class="loadrow"><span id="loadtxt">Loading assets…</span><span id="loadpct">0%</span></div>
+    <div class="loadbar"><div id="loadfill"></div></div>
+    <div id="tip"><b>TIP</b> <span id="tiptxt">Headshots deal up to three times the damage.</span></div>
+  </div>
 </div>
 
 <div id="menu" class="screen hidden">
-  <div class="title">SWAT<span>URBAN SIEGE</span></div>
-  <div class="buttons">
-    <button id="btnPlay" class="primary">DEPLOY</button>
-    <button data-open="settings">SETTINGS</button>
-    <button data-open="controls">CONTROLS</button>
-    <button class="appexit hidden">EXIT TO DESKTOP</button>
+  <div class="logo"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div><div class="ver">v1.3</div></div>
+  <div class="mbuttons">
+    <button id="btnPlay" class="mb primary"><span class="ic" data-icon="target"></span><span><b>PLAY SOLO</b><small>Survive endless waves</small></span></button>
+    <button id="btnMP" class="mb"><span class="ic" data-icon="users"></span><span><b>MULTIPLAYER</b><small>Team DM · Free-for-all · Co-op</small></span></button>
+    <button id="btnLoadout" class="mb"><span class="ic" data-icon="bullet"></span><span><b>LOADOUT</b><small id="loadoutsum">M4A1 + M1911</small></span></button>
+    <button id="btnSettings" class="mb"><span class="ic" data-icon="gear"></span><span><b>SETTINGS</b><small>Graphics · Controls · Audio</small></span></button>
+    <button class="mb appexit hidden"><span class="ic" data-icon="exit"></span><span><b>EXIT</b><small>Close the game</small></span></button>
   </div>
-  <div class="foot">Survive endless waves of hostile operators. Six weapons, keys 1-6. Headshots are deadly.</div>
+  <div class="foot">Operator <b id="menuname">—</b></div>
+</div>
+
+<div id="loadout" class="screen hidden full">
+  <div class="sh"><button class="back" data-back>‹</button><h1>LOADOUT</h1><div class="tabs" id="loTabs"><button data-slot="0" class="on">PRIMARY</button><button data-slot="1">SECONDARY</button></div></div>
+  <div class="lobody">
+    <div id="loList"></div>
+    <div id="loInfo"><div id="loName">M4A1</div><div id="loClass">ASSAULT RIFLE</div><div id="loStats"></div><button id="loEquip" class="primary wide">EQUIP</button></div>
+  </div>
+  <div class="lofoot"><span>PRIMARY <b id="loP">M4A1</b></span><span>SECONDARY <b id="loS">M1911</b></span></div>
+</div>
+
+<div id="settings" class="screen hidden full">
+  <div class="sh"><button class="back" data-back>‹</button><h1>SETTINGS</h1><div class="tabs" id="setTabs"><button data-tab="gfx" class="on">GRAPHICS</button><button data-tab="ctl">CONTROLS</button><button data-tab="aud">AUDIO</button><button data-tab="gp">GAMEPLAY</button></div></div>
+  <div class="setbody">
+    <div class="tab" data-tab="gfx">
+      <label>Graphics quality <select id="optQuality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra</option><option value="mobile">Mobile</option></select></label>
+      <label>Render resolution <select id="optRes"><option value="native">Native (device pixels)</option><option value="1080">1080p</option><option value="1440">1440p</option><option value="2160">4K (2160p)</option></select></label>
+      <label>Field of view <input id="optFov" type="range" min="55" max="95" step="1"><span id="valFov"></span></label>
+      <label class="check">Show FPS / resolution <input id="optFps" type="checkbox"></label>
+      <div id="resinfo"></div>
+    </div>
+    <div class="tab hidden" data-tab="ctl">
+      <label>Look sensitivity <input id="optSens" type="range" min="0.2" max="3" step="0.05"><span id="valSens"></span></label>
+      <label>Aim (ADS) sensitivity <input id="optAdsSens" type="range" min="0.2" max="1.5" step="0.05"><span id="valAdsSens"></span></label>
+      <label class="check">Invert look Y <input id="optInvert" type="checkbox"></label>
+      <div class="mobileset">
+        <label>Control layout <select id="optHand"><option value="right">Right-handed (fire on right)</option><option value="left">Left-handed (fire on left)</option></select></label>
+        <label>Button opacity <input id="optBtnOp" type="range" min="0.25" max="1" step="0.05"><span id="valBtnOp"></span></label>
+        <label class="check">Vibration (fire / hit) <input id="optHaptics" type="checkbox"></label>
+        <label>Touch buttons <button id="btnLayout" class="small">EDIT LAYOUT</button></label>
+      </div>
+      <table id="keys" class="desktoponly">
+        <tr><td>W A S D</td><td>Move</td><td>Mouse</td><td>Look / aim</td></tr>
+        <tr><td>Left mouse</td><td>Fire</td><td>Right mouse</td><td>Aim (SVD: scope)</td></tr>
+        <tr><td>Shift</td><td>Sprint</td><td>C / Ctrl</td><td>Crouch</td></tr>
+        <tr><td>Space</td><td>Jump</td><td>R</td><td>Reload</td></tr>
+        <tr><td>1 / 2 / wheel</td><td>Weapons</td><td>Q</td><td>Last weapon</td></tr>
+        <tr><td>V</td><td>Swap shoulder</td><td>Tab</td><td>Scoreboard</td></tr>
+        <tr><td>Enter / T</td><td>Chat</td><td>Esc / P</td><td>Pause</td></tr>
+      </table>
+    </div>
+    <div class="tab hidden" data-tab="aud">
+      <label>Master volume <input id="optVol" type="range" min="0" max="1" step="0.05"><span id="valVol"></span></label>
+      <label>Effects <input id="optFxVol" type="range" min="0" max="1" step="0.05"><span id="valFxVol"></span></label>
+      <label>Interface <input id="optUiVol" type="range" min="0" max="1" step="0.05"><span id="valUiVol"></span></label>
+    </div>
+    <div class="tab hidden" data-tab="gp">
+      <label>Operator name <input id="optName" maxlength="14" autocomplete="off"></label>
+      <label class="check">Damage numbers <input id="optDmgNum" type="checkbox"></label>
+      <label class="check">Score (+XP) popups <input id="optXp" type="checkbox"></label>
+      <label>Crosshair colour <select id="optXhair"><option value="#ffffff">White</option><option value="#4dff7a">Green</option><option value="#ffe14d">Yellow</option><option value="#ff4d6a">Red</option><option value="#4dd8ff">Cyan</option></select></label>
+      <label class="check">Solo: carry all six weapons <input id="optAllW" type="checkbox"></label>
+    </div>
+  </div>
+</div>
+
+<div id="layouted" class="hidden">
+  <div class="lebar"><span>Drag buttons to move them. Select one and use the slider to resize.</span><input id="leSize" type="range" min="0.6" max="1.6" step="0.05" value="1"><button id="leReset" class="small">RESET</button><button id="leDone" class="small primary">SAVE</button></div>
 </div>
 
 <div id="pause" class="screen hidden dim">
-  <div class="title small">PAUSED</div>
-  <div class="buttons">
-    <button id="btnResume" class="primary">RESUME</button>
-    <button data-open="settings">SETTINGS</button>
-    <button data-open="controls">CONTROLS</button>
-    <button id="btnQuit">QUIT TO MENU</button>
-    <button class="appexit hidden">EXIT TO DESKTOP</button>
+  <div class="pausebox">
+    <h1>PAUSED</h1><div id="pauseinfo"></div>
+    <div class="mbuttons compact">
+      <button id="btnResume" class="mb primary"><span class="ic" data-icon="target"></span><span><b>RESUME</b></span></button>
+      <button id="btnPauseSettings" class="mb"><span class="ic" data-icon="gear"></span><span><b>SETTINGS</b></span></button>
+      <button id="btnQuit" class="mb"><span class="ic" data-icon="exit"></span><span><b id="quitlbl">QUIT TO MENU</b></span></button>
+    </div>
   </div>
 </div>
 
 <div id="gameover" class="screen hidden dim">
-  <div class="title small red">K.I.A.</div>
-  <div id="stats"></div>
-  <div class="buttons"><button id="btnRestart" class="primary">REDEPLOY</button><button id="btnMenu">MAIN MENU</button></div>
-</div>
-
-<div id="settings" class="panel hidden">
-  <h2>SETTINGS</h2>
-  <label>Graphics quality <select id="optQuality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra</option><option value="mobile">Mobile</option></select></label>
-  <label>Render resolution <select id="optRes"><option value="native">Native (device pixels)</option><option value="1080">1080p</option><option value="1440">1440p</option><option value="2160">4K (2160p)</option></select></label>
-  <label>Look sensitivity <input id="optSens" type="range" min="0.2" max="3" step="0.05"><span id="valSens"></span></label>
-  <label>Field of view <input id="optFov" type="range" min="55" max="95" step="1"><span id="valFov"></span></label>
-  <label>Volume <input id="optVol" type="range" min="0" max="1" step="0.05"><span id="valVol"></span></label>
-  <label class="check"><input id="optInvert" type="checkbox"> Invert look Y</label>
-  <div class="mobileset">
-    <label>Control layout <select id="optHand"><option value="right">Right-handed (fire on right)</option><option value="left">Left-handed (fire on left)</option></select></label>
-    <label>Button opacity <input id="optBtnOp" type="range" min="0.25" max="1" step="0.05"><span id="valBtnOp"></span></label>
-    <label class="check"><input id="optHaptics" type="checkbox"> Vibration (fire / hit)</label>
+  <div class="sumbox">
+    <h1 id="sumTitle" class="red">K.I.A.</h1><div id="sumSub"></div>
+    <div id="stats"></div>
+    <div id="sumTable"></div>
+    <div class="row"><button id="btnRestart" class="primary">PLAY AGAIN</button><button id="btnMenu">MAIN MENU</button></div>
   </div>
-  <label class="check"><input id="optFps" type="checkbox"> Show FPS / resolution</label>
-  <div id="resinfo"></div>
-  <button class="close primary">DONE</button>
 </div>
 
-<div id="controls" class="panel hidden">
-  <h2>CONTROLS</h2>
-  <table class="desktoponly">
-    <tr><td>W A S D</td><td>Move (8 directions)</td></tr>
-    <tr><td>Mouse</td><td>Look / aim</td></tr>
-    <tr><td>Left mouse</td><td>Fire (auto rifles / SMG hold; shotgun, sniper and pistol per click)</td></tr>
-    <tr><td>Right mouse (hold)</td><td>Aim down sights (SVD: scope)</td></tr>
-    <tr><td>Shift (hold)</td><td>Sprint</td></tr>
-    <tr><td>C / Left Ctrl</td><td>Crouch (toggle / hold)</td></tr>
-    <tr><td>Space</td><td>Jump</td></tr>
-    <tr><td>R</td><td>Reload</td></tr>
-    <tr><td>1 – 6 / Mouse wheel</td><td>Select weapon (M4A1, AKM, MAC-10, Shotgun, SVD, M1911)</td></tr>
-    <tr><td>Q</td><td>Last weapon</td></tr>
-    <tr><td>V</td><td>Swap shoulder</td></tr>
-    <tr><td>Esc / P</td><td>Pause</td></tr>
-  </table>
-  <table class="mobileonly">
-    <tr><td>Left thumb</td><td>Virtual joystick: small push walks, push far runs. Push up past the ring to lock sprint</td></tr>
-    <tr><td>Runner</td><td>Toggle sprint</td></tr>
-    <tr><td>Right side drag</td><td>Look / aim</td></tr>
-    <tr><td>Fire buttons (hold)</td><td>Fire. Big button on the right, small one on the left. Drag on them to keep aiming</td></tr>
-    <tr><td>Scope</td><td>Toggle aim down sights</td></tr>
-    <tr><td>Reload / Jump / Crouch</td><td>Reload (or tap the ammo panel) / jump / crouch toggle</td></tr>
-    <tr><td>Weapon slots</td><td>Tap a gun under the ammo panel, swipe the panel left/right, or tap the swap button (top right)</td></tr>
-    <tr><td>Gear (top right)</td><td>Pause and settings (layout, opacity, sensitivity)</td></tr>
-  </table>
-  <button class="close primary">DONE</button>
+<div id="mpmenu" class="screen hidden full">
+  <div class="sh"><button class="back" data-back>‹</button><h1>MULTIPLAYER</h1></div>
+  <div class="mpbody">
+    <label class="namefield">YOUR NAME <input id="mpName" maxlength="14" autocomplete="off"></label>
+    <div class="mpcards">
+      <div class="card"><h3>HOST A ROOM</h3><p>Create a room and share the 5-letter code or link. Up to 8 players.</p><button id="btnHost" class="primary wide">CREATE ROOM</button></div>
+      <div class="card"><h3>JOIN A ROOM</h3><p>Enter the room code from your friend.</p><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="btnJoin" class="primary wide">JOIN</button></div>
+    </div>
+    <div id="mpstatus"></div>
+    <div class="note">Peer-to-peer over WebRTC. The host's device runs the match. Room codes go through the free public PeerJS server.</div>
+  </div>
 </div>
+
+<div id="lobby" class="screen hidden full">
+  <div class="sh"><button class="back" id="lobbyLeave">‹</button><h1>LOBBY</h1><div class="roomcode">ROOM <b id="roomCode">-----</b><button id="btnCopy" class="small">COPY LINK</button><button id="btnShare" class="small">SHARE</button></div></div>
+  <div class="lobbybody">
+    <div id="lobbyPlayers"></div>
+    <div class="lobbyside">
+      <label>MODE <select id="lbMode"><option value="tdm">Team Deathmatch</option><option value="ffa">Free-for-all</option><option value="coop">Co-op Waves</option></select></label>
+      <label>SCORE LIMIT <select id="lbScore"><option>15</option><option selected>30</option><option>50</option><option>75</option></select></label>
+      <label>TIME LIMIT <select id="lbTime"><option value="180">3 min</option><option value="300" selected>5 min</option><option value="600">10 min</option></select></label>
+      <div id="lobbyInfo"></div>
+      <button id="btnTeam" class="wide">SWITCH TEAM</button>
+      <button id="btnReady" class="wide">READY</button>
+      <button id="btnStart" class="primary wide">START MATCH</button>
+    </div>
+  </div>
+</div>
+
+<div id="dialog" class="hidden"><div class="dlg"><h2 id="dlgTitle">Notice</h2><p id="dlgText"></p><button id="dlgOk" class="primary">OK</button></div></div>
 
 <script type="module" src="js/main.js"></script>
 </body>
