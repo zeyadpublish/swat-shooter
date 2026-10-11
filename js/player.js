@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { resolveCircle, groundHeight, raycastBoxes, raySphere, rayCapsule } from './physics.js';
 import { GAIT_SPEED, locoClip, dirIndexFromInput } from './character.js';
 import { WEAPONS, WEAPON_BY_ID, falloff } from './weapons.js';
+import { prog, save as saveProg, MEDKIT_MAX } from './prog.js';
+export const HEAL_TIME = 2, HEAL_AMOUNT = 60;
 
 const UP = new THREE.Vector3(0, 1, 0);
 export const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
@@ -21,7 +23,7 @@ export class Player {
     this.c.setGun(this.slots[0].w.id);
     this.crouch = false; this.crouchToggle = false; this.aiming = false; this.grounded = true; this.airTime = 0; this.jumpPhase = null; this.landTimer = 0;
     this.lastHurt = -99; this.dead = false; this.deadTime = 0; this.fireRecent = 0; this.turning = null; this.recoil = 0; this.moving = false; this.sprint = false;
-    this.shots = 0; this.hits = 0; this.headshots = 0; this.emptyClicked = false; this.lastPhase = 0;
+    this.shots = 0; this.hits = 0; this.headshots = 0; this.emptyClicked = false; this.lastPhase = 0; this.healT = 0; this.healAcc = 0; this.vehTrans = null; if (this.c.showMedkit) this.c.showMedkit(false);
     this.c.root.position.copy(this.pos); this.c.aimPitch = 0; this.c.gun.visible = true;
     this.c.play('idle', { fade: 0 });
   }
@@ -54,7 +56,7 @@ export class Player {
   update(dt, inp) {
     const g = this.g, k = inp.keys;
     if (this.dead) { this.deadTime += dt; this.c.update(dt); return; }
-    if (this.vehicle) { this.moving = false; this.sprint = false; this.aiming = false; inp.reloadPressed = false; this.c.root.position.copy(this.pos); this.c.update(dt); return; } // driving: Vehicles moves us
+    if (this.vehicle || this.vehTrans) { this.moving = false; this.sprint = false; this.aiming = false; this.crouch = false; inp.reloadPressed = false; if (this.vehicle && !this.vehTrans) g.vehicles.poseDriver(this.c, this.vehicle); this.c.update(dt); return; } // driving / climbing in or out: Vehicles moves us
     // ---- input
     let f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
     let s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
@@ -66,7 +68,8 @@ export class Player {
       if (m > 0.18) { f = -j.y; s = j.x; slow = m < 0.62; }
     }
     this.moving = !!(f || s);
-    this.crouch = (this.crouchToggle || !!k.ControlLeft) && this.grounded;
+    this.crouch = (this.crouchToggle || !!k.ControlLeft || !!k.ControlRight) && this.grounded;
+    if (inp.medkitPressed) { inp.medkitPressed = false; this.useMedkit(); }
     this.aiming = !!inp.aim;
     this.sprint = !!(k.ShiftLeft || k.ShiftRight || inp.sprintToggle || inp.sprintLock) && this.moving && !slow && !this.aiming && !this.crouch && !inp.fire;
     const gait = this.crouch ? 'crouch' : (this.aiming || slow) ? 'walk' : this.sprint ? 'sprint' : 'run';
@@ -159,7 +162,14 @@ export class Player {
     }
     if (inp.reloadPressed) { inp.reloadPressed = false; this.startReload(); }
     if (!inp.fire) this.triggerUp = true;
-    if (inp.fire && this.reloading <= 0 && this.cool <= 0 && !this.switching && (W.auto || this.triggerUp)) {
+    // medkit: heal over HEAL_TIME seconds, weapon lowered
+    if (this.healT > 0) {
+      const step = Math.min(dt, this.healT) * HEAL_AMOUNT / HEAL_TIME; this.healT -= dt;
+      if (g.mp && g.mp.active && !g.mp.isHost) { this.healAcc += step; if (this.healAcc >= 5 || this.healT <= 0) { g.mp.sendHeal(this.healAcc); this.health = Math.min(100, this.health + this.healAcc); this.healAcc = 0; } }
+      else this.health = Math.min(100, this.health + step);
+      if (this.healT <= 0) { this.healT = 0; this.c.showMedkit(false); }
+    }
+    if (inp.fire && this.reloading <= 0 && this.cool <= 0 && !this.switching && this.healT <= 0 && (W.auto || this.triggerUp)) {
       if (this.mag > 0) { this.shoot(); this.triggerUp = false; }
       else if (!this.emptyClicked) { g.sfx.empty(); this.emptyClicked = true; this.startReload(); }
     }
@@ -169,6 +179,9 @@ export class Player {
     // regen
     if (g.time - this.lastHurt > 5 && this.health < 100) this.health = Math.min(100, this.health + 14 * dt);
     this.c.root.position.copy(this.pos);
+    // support hand leaves the handguard for reloads, weapon swaps and medkits
+    const rt = this.reloading > 0 ? (W.reload - this.reloading) / W.reload : -1;
+    this.c.ikTarget = (rt > 0.08 && rt < 0.9) || this.switching || this.healT > 0 ? 0 : 1;
     this.c.update(dt);
     // reload / switch: tilt and lower the weapon procedurally (no reload clip in the pack)
     const q = this.c.gun.quaternion; // reset to the mount (+ recoil) by Character.update
@@ -181,11 +194,21 @@ export class Player {
       q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(1.1 * k, 0, 0.35 * k)));
       this.c.gun.position.y -= 0.25 * k / this.c.gunS; // pull down out of view
     }
+    if (this.healT > 0) { const k = Math.min(1, (HEAL_TIME - this.healT) * 5, this.healT * 5); q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.9 * k, 0, 0.3 * k))); this.c.gun.position.y -= 0.12 * k / this.c.gunS; }
     if (this.pumpT > 0) { this.pumpT -= dt; const k = Math.sin(Math.max(0, 1 - this.pumpT / 0.45) * Math.PI); q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.18 * k, 0, 0))); }
   }
+  get medkits() { return prog().medkits | 0; }
+  useMedkit() {
+    const g = this.g;
+    if (this.dead || this.vehicle || this.healT > 0 || this.health >= 100 || this.medkits <= 0) { if (this.medkits <= 0 || this.health >= 100) g.hud.toast && g.hud.toast(this.medkits <= 0 ? 'NO MEDKITS' : 'HEALTH FULL'); return false; }
+    const p = prog(); p.medkits--; saveProg();
+    this.healT = HEAL_TIME; this.healAcc = 0; this.reloading = 0; this.c.mag.visible = true; this.c.showMedkit(true); g.sfx.medkit && g.sfx.medkit();
+    return true;
+  }
+  addMedkit() { const p = prog(); if (p.medkits >= MEDKIT_MAX) return false; p.medkits++; saveProg(); return true; }
   startReload() {
     const W = this.weapon;
-    if (this.reloading > 0 || this.switching || this.mag >= W.mag || this.reserve <= 0) return;
+    if (this.reloading > 0 || this.switching || this.healT > 0 || this.mag >= W.mag || this.reserve <= 0) return;
     this.reloading = W.reload; this.g.sfx.reload(W.reload / 2.1);
   }
   spread() {

@@ -12,7 +12,9 @@ import { raycastBoxes } from './physics.js';
 import { angDiff } from './player.js';
 import { esc, cleanName } from './ui.js';
 import { icon } from './icons.js';
-import { TEAM_LOOKS, FFA_LOOKS, enemyLook } from './character.js';
+import { TEAM_LOOKS, FFA_LOOKS, enemyLook, OPERATORS } from './character.js';
+import { prog } from './prog.js';
+const OPS = new Set(OPERATORS.map(o => o.id));
 
 const $ = (id) => document.getElementById(id);
 const now = () => performance.now() / 1000;
@@ -56,7 +58,9 @@ class Puppet {
     const st = k < 0.5 ? s0 : s1; this.crouch = !!(st.f & 1); this.flags = st.f; c.upperTarget = st.f & 8 ? 1 : 0; c.upperName = this.crouch ? 'idle crouching aiming' : 'idle aiming';
     if (st.w && c.gunId !== st.w && WEAPON_BY_ID[st.w]) c.setGun(st.w);
     if (st.a) c.play(st.a, { fade: 0.2, once: ONCE.test(st.a), sync: LOCO.test(st.a) && LOCO.test(c.currentName), timeScale: st.ts || 1 });
-    c.root.position.copy(this.pos); if (st.f & 16) c.root.visible = false; // driving: hidden inside the vehicle
+    c.root.position.copy(this.pos);
+    if (st.f & 16) { const v = this.mp.vehicleOf(this.id); if (v) { this.mp.g.vehicles.poseDriver(c, v); this.wasDriving = true; } else c.root.visible = false; } // driving: seated in the cab
+    else if (this.wasDriving) { this.wasDriving = false; if (c.gun) c.gun.visible = true; c.ikTarget = 1; }
     c.update(dt);
     // footsteps
     if (LOCO.test(c.currentName) && this.mp.g.player.pos.distanceTo(this.pos) < 24) {
@@ -84,7 +88,7 @@ const PUBLIC_URL = 'https://zeyadpublish.github.io/swat-shooter/';
 export class MP {
   constructor(game) {
     this.g = game; this.net = null; this.role = null; this.active = false; this.players = new Map(); this.remotes = new Map(); this.ghosts = new Map();
-    this.mode = 'tdm'; this.lim = { score: 30, time: 300 }; this.botCount = 3; this.botDiff = 'normal'; this.myId = -1; this.rtt = 0; this.sendT = 0; this.teamScore = [0, 0]; this.timeLeft = 0;
+    this.mode = 'tdm'; this.map = 'city'; this.lim = { score: 30, time: 300 }; this.botCount = 3; this.botDiff = 'normal'; this.myId = -1; this.rtt = 0; this.sendT = 0; this.teamScore = [0, 0]; this.timeLeft = 0;
     const me = this;
     this.localProxy = { // the host's own player, as an AI target in co-op
       get pos() { return game.player.pos; }, get vel() { return game.player.vel; }, get crouch() { return game.player.crouch; }, get dead() { return game.player.dead; },
@@ -95,7 +99,7 @@ export class MP {
   get isHost() { return this.role === 'host'; }
   get me() { return this.players.get(this.myId); }
   get inLobby() { return !!this.role && !this.active; }
-  tintFor(p) { const id = p.id | 0; if (this.mode === 'tdm') { const L = TEAM_LOOKS[p.team || 0]; return L[id % L.length]; } return FFA_LOOKS[id % FFA_LOOKS.length]; } // appearance (look key)
+  tintFor(p) { const id = p.id | 0; if (!p.bot && OPS.has(p.op) && !(this.mode === 'tdm' && p.team === 1)) return p.op === 'swat' && this.mode === 'tdm' ? 'swat_blue' : p.op; if (this.mode === 'tdm') { const L = TEAM_LOOKS[p.team || 0]; return L[id % L.length]; } return FFA_LOOKS[id % FFA_LOOKS.length]; } // appearance (look key)
   name(id) { const p = this.players.get(id); return p ? p.name : '?'; }
 
   // ------------------------------------------------------------------ UI: multiplayer menu + lobby
@@ -109,8 +113,8 @@ export class MP {
     $('btnBots').onclick = () => this.host(true);
     $('btnJoin').onclick = () => this.join($('joinCode').value);
     $('lobbyLeave').onclick = () => { g.sfx.ui('back'); this.leave(); };
-    for (const id of ['lbMode', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).addEventListener('change', () => {
-      if (!this.isHost) return; this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value };
+    for (const id of ['lbMode', 'lbMap', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).addEventListener('change', () => {
+      if (!this.isHost) return; this.mode = $('lbMode').value; this.map = $('lbMap').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value };
       this.botCount = +$('lbBots').value; this.botDiff = $('lbDiff').value; this.broadcastLobby();
     });
     $('btnReady').onclick = () => { if (this.isHost) return; this.net.broadcast({ t: 'rd' }); };
@@ -163,8 +167,8 @@ export class MP {
     try {
       const n = offline ? (this.net = new LocalNet()) : this.setupNet(); this.code = await n.host(); this.role = 'host'; this.myId = 0; this.nextId = 1; this.offline = offline;
       if (offline && $('lbMode').value === 'coop') $('lbMode').value = 'tdm';
-      this.players.clear(); this.players.set(0, this.newPlayer(0, this.g.settings.name, 0, null)); this.me.ready = true;
-      this.mode = $('lbMode').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value }; this.botCount = +$('lbBots').value; this.botDiff = $('lbDiff').value;
+      this.players.clear(); this.players.set(0, this.newPlayer(0, this.g.settings.name, 0, null)); this.me.ready = true; this.me.op = prog().op;
+      this.mode = $('lbMode').value; this.map = $('lbMap').value; this.lim = { score: +$('lbScore').value, time: +$('lbTime').value }; this.botCount = +$('lbBots').value; this.botDiff = $('lbDiff').value;
       if (offline && !this.botCount) { this.botCount = 3; $('lbBots').value = '3'; }
       this.startTick(); this.showLobby();
     } catch (e) { this.status(errText(e), true); this.cleanup(); }
@@ -179,7 +183,7 @@ export class MP {
       const n = this.setupNet(); this.role = 'client'; this.code = code;
       await n.join(code);
       const welcome = new Promise((res, rej) => { this.welcomeCb = res; this.rejectCb = rej; setTimeout(() => rej(new Error('The host did not answer.')), 8000); });
-      n.broadcast({ t: 'hello', name: this.g.settings.name, v: 1 });
+      n.broadcast({ t: 'hello', name: this.g.settings.name, v: 1, op: prog().op });
       await welcome; this.startTick(); this.showLobby();
     } catch (e) { this.status(errText(e), true); this.cleanup(); }
     this.busy = false;
@@ -196,7 +200,7 @@ export class MP {
       if (this.players.size >= MAX_PLAYERS) { this.net.send(pid, { t: 'full' }); setTimeout(() => this.net.kick(pid), 400); return; }
       const cnt = [0, 1].map(t => [...this.players.values()].filter(q => q.team === t).length);
       const np = this.newPlayer(this.nextId++, this.uniqueName(m.name), cnt[1] < cnt[0] ? 1 : 0, pid);
-      this.players.set(np.id, np);
+      if (OPS.has(m.op)) np.op = m.op; this.players.set(np.id, np);
       this.net.send(pid, { t: 'welcome', id: np.id, code: this.code });
       this.sysChat(`${np.name} joined`);
       if (this.active) { // joining a match in progress
@@ -214,6 +218,7 @@ export class MP {
       case 'ch': this.chat(p.id, String(m.m || '').slice(0, 80)); break;
       case 'bye': this.net.kick(pid); break;
       case 've': { const v = this.g.vehicles.list[m.v | 0], last = p.hist[p.hist.length - 1]; if (v && !p.dead && last && v.rectDist(last.p) < 3.5 && !this.vehicleOf(p.id)) this.g.vehicles.enter(v, p.id); break; }
+      case 'hl': if (!p.dead) p.hp = Math.min(100, p.hp + Math.min(20, Math.max(0, +m.n || 0))); break;
       case 'vx': { const v = this.vehicleOf(p.id); if (v) this.g.vehicles.eject(v); break; }
       case 'vd': { const v = this.g.vehicles.list[m.v | 0]; const d = Math.min(120, Math.max(0, +m.d || 0)); if (v && !p.dead && now() - (p.lastVd || 0) > 0.06) { p.lastVd = now(); v.damage(d, p.id); } break; }
     }
@@ -232,10 +237,10 @@ export class MP {
     if (this.active) { this.broadcastRoster(); this.checkCoopWipe(); } else this.broadcastLobby();
   }
   broadcastLobby() {
-    const m = { t: 'lb', mode: this.mode, lim: this.lim, code: this.code, bots: [this.botCount, this.botDiff], pl: [...this.players.values()].filter(p => !p.bot).map(p => [p.id, p.name, p.team, p.ready ? 1 : 0]) };
+    const m = { t: 'lb', mode: this.mode, map: this.map, lim: this.lim, code: this.code, bots: [this.botCount, this.botDiff], pl: [...this.players.values()].filter(p => !p.bot).map(p => [p.id, p.name, p.team, p.ready ? 1 : 0, p.op || '']) };
     this.net.broadcast(m); this.renderLobby(m);
   }
-  roster() { return [...this.players.values()].map(p => [p.id, p.name, p.team, p.k, p.d, p.s]); }
+  roster() { return [...this.players.values()].map(p => [p.id, p.name, p.team, p.k, p.d, p.s, p.bot ? '' : (p.op || '')]); }
   broadcastRoster() { const m = { t: 'ro', pl: this.roster() }; this.net.broadcast(m); }
 
   // ------------------------------------------------------------------ client: messages from the host
@@ -244,9 +249,9 @@ export class MP {
       case 'welcome': this.myId = m.id; this.welcomeCb && this.welcomeCb(); this.welcomeCb = null; break;
       case 'full': this.rejectCb && this.rejectCb(new Error('That room is full (8 players).')); break;
       case 'po': this.rtt = (performance.now() - m.c); break;
-      case 'lb': this.mode = m.mode; this.lim = m.lim; if (m.bots) { this.botCount = m.bots[0]; this.botDiff = m.bots[1]; } this.syncPlayers(m.pl.map(([id, name, team, ready]) => ({ id, name, team, ready: !!ready }))); this.renderLobby(m); break;
+      case 'lb': this.mode = m.mode; this.map = m.map || 'city'; this.lim = m.lim; if (m.bots) { this.botCount = m.bots[0]; this.botDiff = m.bots[1]; } this.syncPlayers(m.pl.map(([id, name, team, ready, op]) => ({ id, name, team, ready: !!ready, op }))); this.renderLobby(m); break;
       case 'st': this.beginMatch(m); break;
-      case 'ro': this.syncPlayers(m.pl.map(([id, name, team, k, d, s]) => ({ id, name, team, k, d, s }))); break;
+      case 'ro': this.syncPlayers(m.pl.map(([id, name, team, k, d, s, op]) => ({ id, name, team, k, d, s, op }))); break;
       case 'sn': this.onSnapshot(m); break;
       case 'fx': this.onFx(m); break;
       case 'ht': this.onHitConfirm(m); break;
@@ -254,7 +259,7 @@ export class MP {
       case 'kl': this.onKill(m); break;
       case 'sp': this.onSpawn(m); break;
       case 'ch': this.addChat(m.id, m.m, m.sys); break;
-      case 'bn': this.g.hud.banner(esc(m.a), esc(m.b || ''), 3); if (m.wave) this.onWave(m); break;
+      case 'bn': this.g.hud.banner(esc(m.a), esc(m.b || ''), 3); if (m.wave) this.onWave(m); if (/WAVE CLEARED/.test(m.a) && !this.g.player.dead) { this.g.earn.waves++; this.g.reward(25, 150); } break;
       case 'end': this.onEnd(m); break;
       case 'closed': this.hostLost('The host closed the room.'); break;
     }
@@ -279,7 +284,7 @@ export class MP {
   showLobby() {
     const g = this.g; $('roomCode').textContent = this.code; g.ui.show('lobby');
     $('lobbyInfo').textContent = this.isHost ? 'Share the code or link. Start when everyone is ready.' : 'Waiting for the host to start…';
-    for (const id of ['lbMode', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).disabled = !this.isHost;
+    for (const id of ['lbMode', 'lbMap', 'lbScore', 'lbTime', 'lbBots', 'lbDiff']) $(id).disabled = !this.isHost;
     $('btnStart').classList.toggle('hidden', !this.isHost); $('btnReady').classList.toggle('hidden', this.isHost);
     $('btnShare').classList.toggle('hidden', !navigator.share || !!this.offline); $('btnCopy').classList.toggle('hidden', !!this.offline);
     $('lbMode').querySelector('option[value="coop"]').disabled = !!this.offline;
@@ -288,7 +293,7 @@ export class MP {
   }
   renderLobby(m) {
     if (!m) return; const pl = [...this.players.values()];
-    $('lbMode').value = this.mode; $('lbScore').value = String(this.lim.score); $('lbTime').value = String(this.lim.time);
+    $('lbMode').value = this.mode; $('lbMap').value = this.map; this.g.meta && this.g.meta.mapThumb('lbMapImg', this.map); $('lbScore').value = String(this.lim.score); $('lbTime').value = String(this.lim.time);
     $('lbScore').parentElement.classList.toggle('hidden', this.mode === 'coop'); $('lbTime').parentElement.classList.toggle('hidden', this.mode === 'coop');
     $('lbBots').parentElement.classList.toggle('hidden', this.mode === 'coop'); $('lbDiff').parentElement.classList.toggle('hidden', this.mode === 'coop');
     $('lbBots').value = String(this.botCount); $('lbDiff').value = this.botDiff;
@@ -309,7 +314,7 @@ export class MP {
   pickSpawn(p) {
     const w = this.g.world, others = [...this.players.values()].filter(q => q !== p && !q.dead).map(q => this.posOf(q.id)).filter(Boolean);
     let cands;
-    if (this.mode === 'tdm') cands = TEAM_SPAWNS[p.team].map(([x, z]) => new THREE.Vector3(x, 0, z));
+    if (this.mode === 'tdm') cands = (this.g.world.teamSpawns || TEAM_SPAWNS)[p.team].map(([x, z]) => new THREE.Vector3(x, 0, z));
     else if (this.mode === 'coop') { const a = others[0] || w.playerSpawn; cands = [0, 1, 2, 3, 4, 5].map(i => a.clone().setY(0).add(new THREE.Vector3(Math.cos(i * 1.05) * 1.6, 0, Math.sin(i * 1.05) * 1.6))); cands.push(w.playerSpawn.clone()); }
     else cands = w.enemySpawns.map(s => s.clone()).concat([w.playerSpawn.clone()]);
     let best = cands[0], bd = -1;
@@ -336,9 +341,10 @@ export class MP {
   }
   removeBots() { for (const p of [...this.players.values()]) if (p.bot) { this.players.delete(p.id); this.removeRemote(p.id); } }
   startMsg(all = true) {
-    return { t: 'st', mode: this.mode, lim: this.lim, pl: this.roster(), sp: Object.fromEntries([...this.players.values()].filter(p => !p.dead).map(p => [p.id, [...A(p.spawn.p), r2(p.spawn.y)]])), tl: this.timeLeft, sc: this.teamScore, wave: this.g.wave || 0, all };
+    return { t: 'st', mode: this.mode, map: this.map, lim: this.lim, pl: this.roster(), sp: Object.fromEntries([...this.players.values()].filter(p => !p.dead).map(p => [p.id, [...A(p.spawn.p), r2(p.spawn.y)]])), tl: this.timeLeft, sc: this.teamScore, wave: this.g.wave || 0, all };
   }
   startMatch() {
+    this.g.setMap(this.map);
     this.addBots();
     this.teamScore = [0, 0]; this.matchEnd = now() + this.lim.time; this.timeLeft = this.lim.time;
     for (const p of this.players.values()) Object.assign(p, { k: 0, d: 0, s: 0, hp: 100, dead: false, prot: now() + PROTECT, hist: [], hs: 0, shots: 0, hits: 0, respawnAt: 0 });
@@ -346,8 +352,8 @@ export class MP {
     const m = this.startMsg(); this.net.broadcast(m); this.beginMatch(m);
   }
   beginMatch(m) {
-    const g = this.g; this.mode = m.mode; this.lim = m.lim; this.timeLeft = m.tl; this.teamScore = m.sc || [0, 0];
-    if (!this.isHost) this.syncPlayers(m.pl.map(([id, name, team, k, d, s]) => ({ id, name, team, k, d, s, dead: false, hp: 100 })));
+    const g = this.g; this.mode = m.mode; this.map = m.map || 'city'; g.setMap(this.map); this.lim = m.lim; this.timeLeft = m.tl; this.teamScore = m.sc || [0, 0];
+    if (!this.isHost) this.syncPlayers(m.pl.map(([id, name, team, k, d, s, op]) => ({ id, name, team, k, d, s, op, dead: false, hp: 100 })));
     for (const r of this.remotes.values()) r.dispose(); this.remotes.clear();
     for (const r of this.ghosts.values()) r.dispose(); this.ghosts.clear();
     this.active = true;
@@ -386,7 +392,7 @@ export class MP {
   }
   stateOfLocal() {
     const p = this.g.player, c = p.c;
-    return { p: A(p.pos), y: r2(c.yaw), pi: r2(c.aimPitch), a: c.currentName, ts: c.current ? r2(c.current.timeScale) : 1, w: c.gunId, f: (p.crouch ? 1 : 0) | (p.aiming ? 2 : 0) | (p.sprint ? 4 : 0) | (c.upperTarget ? 8 : 0) | (p.vehicle ? 16 : 0) };
+    return { p: A(p.pos), y: r2(c.yaw), pi: r2(c.aimPitch), a: c.currentName, ts: c.current ? r2(c.current.timeScale) : 1, w: c.gunId, f: (p.crouch ? 1 : 0) | (p.aiming ? 2 : 0) | (p.sprint ? 4 : 0) | (c.upperTarget ? 8 : 0) | (p.vehicle && !p.vehTrans ? 16 : 0) };
   }
   vehicleOf(id) { return this.g.vehicles.list.find(v => v.driver === id && !v.dead) || null; }
   sendState() { const s = this.stateOfLocal(); s.t = 's'; s.r = Math.round(this.rtt); const vi = this.g.player.vehicle && this.g.vehicles.localInput; if (vi) s.vi = [vi.th, vi.st, vi.hb]; this.net.broadcast(s); }
@@ -620,6 +626,8 @@ export class MP {
     if (m.id === this.myId) { this.g.player.respawn(V(m.p), m.y); $('respawn').classList.add('hidden'); this.respawnT = 0; if (this.g.touch) this.g.touch.reset(); }
     else { const r = this.remotes.get(m.id); if (r && r.isBot) r.spawn(V(m.p), m.y); else if (r) { r.buf.length = 0; r.pos.copy(V(m.p)); } }
   }
+  // client used a medkit: the host owns everyone's health
+  sendHeal(n) { if (this.active && !this.isHost) this.net.broadcast({ t: 'hl', n: Math.round(n * 10) / 10 }); }
   // host: local death is handled in applyDamage; client: wait for the host's kill/spawn messages
   onLocalDeath() { if (!this.isHost && this.me) this.me.dead = true; }
   onLocalDamage(m) {

@@ -1,12 +1,13 @@
 // Menus and screens: navigation + transitions, UI sounds, loading tips, loadout (3D gun preview + stat bars),
 // tabbed settings (saved to localStorage), touch-button layout editor, dialogs.
+import { prog, owns, buy, PRICES, fmt, rankOK, rankReq, rankName } from './prog.js';
 import * as THREE from 'three';
 import { WEAPONS, WEAPON_BY_ID, PRIMARIES, SECONDARIES } from './weapons.js';
 import { buildGun } from './character.js';
 
 const $ = (id) => document.getElementById(id);
 export const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const SCREENS = ['menu', 'loadout', 'settings', 'pause', 'gameover', 'mpmenu', 'lobby'];
+export const SCREENS = ['menu', 'loadout', 'operators', 'store', 'settings', 'pause', 'gameover', 'mpmenu', 'lobby', 'maps', 'campaign', 'briefing'];
 export const TIPS = [
   'Headshots deal up to three times the damage.',
   'Aim down sights to tighten your spread. Crouching steadies it further.',
@@ -68,6 +69,7 @@ export class UI {
     $('hud').classList.toggle('hidden', !inGame);
     if (id === 'loadout') this.openLoadout();
     if (id === 'menu') this.refreshMenu();
+    this.g.meta && this.g.meta.onShow(id);
     this.g.onScreen && this.g.onScreen(id);
   }
   back() {
@@ -78,7 +80,7 @@ export class UI {
   dialog(title, text, cb) { $('dlgTitle').textContent = title; $('dlgText').textContent = text; $('dialog').classList.remove('hidden'); this.dlgCb = cb; }
   refreshMenu() {
     const s = this.g.settings;
-    $('loadoutsum').textContent = s.allWeapons ? 'All six weapons (solo)' : `${WEAPON_BY_ID[s.primary].name} + ${WEAPON_BY_ID[s.secondary].name}`;
+    $('loadoutsum').textContent = s.allWeapons ? 'All unlocked weapons (solo)' : `${WEAPON_BY_ID[owns('gun', s.primary) ? s.primary : 'm4a1'].name} + ${WEAPON_BY_ID[s.secondary].name}`;
     $('menuname').textContent = s.name;
   }
 
@@ -117,59 +119,66 @@ export class UI {
 
   // ---------------- touch layout editor ----------------
   // positions are stored as button-centre fractions of the screen in the right-handed frame (mirrored for left-handed)
-  applyLayout() {
-    const L = this.g.settings.layout || {};
-    for (const el of document.querySelectorAll('#tbtns .tb')) {
-      const c = L[el.id];
-      if (c) { el.classList.add('custom'); el.style.left = (c.x * 100).toFixed(2) + '%'; el.style.top = (c.y * 100).toFixed(2) + '%'; el.style.setProperty('--tx', '-50%'); el.style.setProperty('--ty', '-50%'); el.style.setProperty('--bs', c.s || 1); }
-      else { el.classList.remove('custom'); el.style.left = el.style.top = ''; el.style.removeProperty('--tx'); el.style.removeProperty('--ty'); el.style.removeProperty('--bs'); }
-    }
-  }
+  applyLayout() { if (this.g.touch) this.g.touch.placeControls(); }
+  // Customize Controls: drag any on-foot control, per-control size slider, global size slider, reset, save.
+  // Stored in settings.ctl = { id: { x, y, s } } (ring centre, right-handed frame) and settings.ctlScale.
   editLayout() {
     const g = this.g; if (!g.touch) return;
-    const s = g.settings; s.layout = s.layout || {};
-    const work = JSON.parse(JSON.stringify(s.layout));
+    const s = g.settings;
+    const saved = { ctl: JSON.parse(JSON.stringify(s.ctl || {})), ctlScale: s.ctlScale || 1 };
+    const work = JSON.parse(JSON.stringify(saved.ctl)); let gscale = saved.ctlScale;
     document.body.classList.add('editing'); $('layouted').classList.remove('hidden'); $('settings').classList.add('hidden');
     $('hud').classList.remove('hidden');
+    const D = g.touch.constructor.DEFAULTS;
+    const ids = ['joybase', 'tSprint', 'tMed', 'tUse', 'tAim', 'tPause', 'tReload', 'tFire', 'tCrouch'];
+    const els = ids.map(id => $(id)).filter(Boolean);
     let sel = null, drag = null;
-    const btns = [...document.querySelectorAll('#tbtns .tb')];
     const W = () => innerWidth, H = () => innerHeight, left = () => s.hand === 'left';
-    const centre = (el) => { const r = el.getBoundingClientRect(); let x = (r.left + r.width / 2) / W(); if (left()) x = 1 - x; return { x, y: (r.top + r.height / 2) / H() }; };
-    const select = (el) => { sel = el; btns.forEach(b => b.classList.toggle('sel', b === el)); $('leSize').value = (work[el.id] && work[el.id].s) || 1; };
-    const apply = () => { const keep = s.layout; s.layout = work; this.applyLayout(); s.layout = keep; };
+    const apply = () => { s.ctl = work; s.ctlScale = gscale; g.touch.placeControls(); };
+    const cur = (id) => { const d = D[id], u = work[id] || {}; return { x: u.x ?? d.x, y: u.y ?? d.y, s: u.s || 1 }; };
+    const select = (el) => { sel = el; els.forEach(b => b.classList.toggle('sel', b === el)); $('leSize').value = cur(el.id).s; $('leName').textContent = (el.dataset.label || 'JOYSTICK'); };
     const down = (e) => {
-      const el = e.target.closest('.tb'); if (!el || !btns.includes(el)) return;
+      const el = e.target.closest && e.target.closest('.refctl'); if (!el || !els.includes(el)) return;
       e.preventDefault(); e.stopPropagation(); select(el);
-      if (!work[el.id]) work[el.id] = { ...centre(el), s: 1 };
+      work[el.id] = cur(el.id);
       drag = { id: e.pointerId, el, sx: e.clientX, sy: e.clientY, ox: work[el.id].x, oy: work[el.id].y };
     };
     const move = (e) => {
       if (!drag || e.pointerId !== drag.id) return; e.preventDefault();
-      let dx = (e.clientX - drag.sx) / W(); if (left()) dx = -dx;
-      const c = work[drag.el.id]; c.x = Math.min(0.97, Math.max(0.03, drag.ox + dx)); c.y = Math.min(0.96, Math.max(0.12, drag.oy + (e.clientY - drag.sy) / H()));
+      const fixed = drag.el.id === 'tPause';
+      let dx = (e.clientX - drag.sx) / W(); if (left() && !fixed) dx = -dx;
+      const c = work[drag.el.id]; c.x = Math.min(0.97, Math.max(0.03, drag.ox + dx)); c.y = Math.min(0.95, Math.max(0.05, drag.oy + (e.clientY - drag.sy) / H()));
       apply();
     };
     const up = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
-    const tb = $('tbtns'); tb.style.pointerEvents = 'auto';
-    tb.addEventListener('pointerdown', down, true); addEventListener('pointermove', move, true); addEventListener('pointerup', up, true);
-    $('leSize').oninput = () => { if (!sel) return; if (!work[sel.id]) work[sel.id] = { ...centre(sel), s: 1 }; work[sel.id].s = parseFloat($('leSize').value); apply(); };
+    const root = $('touch');
+    root.addEventListener('pointerdown', down, true); addEventListener('pointermove', move, true); addEventListener('pointerup', up, true); addEventListener('pointercancel', up, true);
+    $('leSize').value = 1; $('leAll').value = gscale; $('leName').textContent = 'TAP A CONTROL';
+    $('leSize').oninput = () => { if (!sel) return; work[sel.id] = cur(sel.id); work[sel.id].s = parseFloat($('leSize').value); apply(); };
+    $('leAll').oninput = () => { gscale = parseFloat($('leAll').value); apply(); };
     const finish = (keep) => {
-      tb.removeEventListener('pointerdown', down, true); removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true);
-      tb.style.pointerEvents = ''; btns.forEach(b => b.classList.remove('sel'));
-      if (keep) { s.layout = work; localStorage.setItem('swat-settings', JSON.stringify(s)); }
-      this.applyLayout(); document.body.classList.remove('editing'); $('layouted').classList.add('hidden');
+      root.removeEventListener('pointerdown', down, true); removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true); removeEventListener('pointercancel', up, true);
+      els.forEach(b => b.classList.remove('sel'));
+      if (keep) { s.ctl = work; s.ctlScale = gscale; localStorage.setItem('swat-settings', JSON.stringify(s)); }
+      else { s.ctl = saved.ctl; s.ctlScale = saved.ctlScale; }
+      g.touch.placeControls(); document.body.classList.remove('editing'); $('layouted').classList.add('hidden');
       g.touch.reset(); this.show('settings', false);
     };
     $('leDone').onclick = () => finish(true);
-    $('leReset').onclick = () => { for (const k in work) delete work[k]; apply(); sel && select(sel); };
-    this.layoutTest = { work, finish, select }; // for headless tests
+    $('leCancel').onclick = () => finish(false);
+    $('leReset').onclick = () => { for (const k in work) delete work[k]; gscale = 1; $('leAll').value = 1; $('leSize').value = 1; apply(); };
+    this.layoutTest = { work, finish, select, apply, setAll: (v) => { gscale = v; apply(); } }; // for headless tests
   }
 
   // ---------------- loadout: rotating 3D preview of the selected gun ----------------
   bindLoadout() {
     this.loSlot = 0;
     [...$('loTabs').children].forEach(b => b.addEventListener('click', () => { this.loSlot = +b.dataset.slot; this.renderLoadoutList(); }));
-    $('loEquip').onclick = () => this.equip(this.loSel);
+    $('loEquip').onclick = () => {
+      const id = this.loSel;
+      if (!owns('gun', id)) { const pr = PRICES.guns[id]; if (!rankOK('gun', id)) { this.dialog('RANK REQUIRED', `${WEAPON_BY_ID[id].name} unlocks at rank ${rankReq('gun', id)} (${rankName(rankReq('gun', id))}). Earn XP from kills, waves, matches and campaign missions.`); return; } if (!buy('gun', id, pr)) { this.dialog('NOT ENOUGH COINS', `${WEAPON_BY_ID[id].name} costs ${fmt(pr)} coins. You have ${fmt(prog().coins)}.`); return; } this.g.sfx.coins && this.g.sfx.coins(); this.g.meta.refreshTop(); }
+      this.equip(id);
+    };
   }
   openLoadout() {
     const g = this.g;
@@ -190,13 +199,16 @@ export class UI {
     const s = this.g.settings, ids = this.loSlot === 0 ? PRIMARIES : SECONDARIES, eq = this.loSlot === 0 ? s.primary : s.secondary;
     [...$('loTabs').children].forEach(b => b.classList.toggle('on', +b.dataset.slot === this.loSlot));
     if (!ids.includes(this.loSel)) this.loSel = eq;
-    $('loList').innerHTML = ids.map(id => { const w = WEAPON_BY_ID[id]; return `<div class="lo${id === this.loSel ? ' sel' : ''}${id === eq ? ' eq' : ''}" data-id="${id}"><img src="${w.thumb}" alt=""><div><b>${w.name}</b><small>${w.cls}</small></div></div>`; }).join('');
+    $('loList').innerHTML = ids.map(id => { const w = WEAPON_BY_ID[id], own = owns('gun', id); return `<div class="lo${id === this.loSel ? ' sel' : ''}${id === eq ? ' eq' : ''}${own ? '' : ' locked'}" data-id="${id}"><img src="${w.thumb}" alt=""><div><b>${w.name}</b><small>${w.cls}</small></div>${own ? (id === eq ? '<em>EQUIPPED</em>' : '') : `<em class="price"><i class="coinic"></i>${fmt(PRICES.guns[id])}</em>`}</div>`; }).join('');
     $('loList').querySelectorAll('.lo').forEach(el => {
-      el.addEventListener('click', () => { if (this.loSel === el.dataset.id) { this.equip(el.dataset.id); return; } this.loSel = el.dataset.id; this.renderLoadoutList(); this.preview(this.loSel); });
+      el.addEventListener('click', () => { if (this.loSel === el.dataset.id) { $('loEquip').click(); return; } this.loSel = el.dataset.id; this.renderLoadoutList(); this.preview(this.loSel); });
     });
     $('loP').textContent = WEAPON_BY_ID[s.primary].name; $('loS').textContent = WEAPON_BY_ID[s.secondary].name;
-    $('loEquip').textContent = this.loSel === eq ? 'EQUIPPED' : 'EQUIP ' + (this.loSlot === 0 ? 'PRIMARY' : 'SECONDARY');
-    $('loEquip').disabled = this.loSel === eq;
+    const own = owns('gun', this.loSel);
+    if (own) $('loEquip').textContent = this.loSel === eq ? 'EQUIPPED' : 'EQUIP ' + (this.loSlot === 0 ? 'PRIMARY' : 'SECONDARY');
+    else if (!rankOK('gun', this.loSel)) $('loEquip').innerHTML = `RANK ${rankReq('gun', this.loSel)} REQUIRED`;
+    else $('loEquip').innerHTML = `UNLOCK <i class="coinic"></i> ${fmt(PRICES.guns[this.loSel])}`;
+    $('loEquip').disabled = own && this.loSel === eq; $('loEquip').classList.toggle('cant', !own && (prog().coins < PRICES.guns[this.loSel] || !rankOK('gun', this.loSel)));
     this.statBars(WEAPON_BY_ID[this.loSel]);
   }
   equip(id) {
@@ -209,6 +221,7 @@ export class UI {
     $('loName').textContent = w.name; $('loClass').textContent = w.cls + (w.auto ? ' · FULL AUTO' : w.pump ? ' · PUMP ACTION' : ' · SEMI AUTO');
     if (!$('loStats').children.length) $('loStats').innerHTML = STAT_DEFS.map(([n]) => `<div class="stat"><span>${n}</span><div class="bar"><i></i></div><em></em></div>`).join('');
     [...$('loStats').children].forEach((el, i) => { el.querySelector('i').style.width = (STAT_DEFS[i][1](w) * 100).toFixed(0) + '%'; el.querySelector('em').textContent = STAT_DEFS[i][2](w); });
+    $('loSpecs').innerHTML = `<span><small>FIRE MODE</small>${w.auto ? 'AUTO' : w.pump ? 'PUMP' : 'SEMI'}</span><span><small>MAGAZINE</small>${w.mag}</span><span><small>RESERVE</small>${w.reserve ?? '—'}</span>`;
   }
   preview(id) {
     const pv = this.pv; if (!pv) return;

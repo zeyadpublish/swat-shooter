@@ -3,6 +3,7 @@ import { asset } from './assets.js';
 import * as THREE from 'three';
 import { Box, NavGrid } from './physics.js';
 import { enterable } from './buildings.js';
+import { buildDesert, buildBase } from './maps.js';
 
 export const ARENA = 46;
 
@@ -105,6 +106,8 @@ export class World {
     });
     this.carN = 0;
     this.inst = new Map();
+    // v1.5: preload the Desert Town / Military Base texture sets with everything else (no black first frames on a map switch)
+    for (const set of ['dense_sand', 'clay_plaster', 'dry_ground_01']) { this.tex(set + '_diff', true); this.tex(set + '_nor_gl'); this.tex(set + '_arm'); }
   }
   car(x, z, rot, opts = {}) { // alternate realistic sedans and tarp-covered cars
     const k = this.carN++;
@@ -224,9 +227,25 @@ export class World {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat); m.rotation.set(-Math.PI / 2, 0, rot); m.position.set(x, 0.006, z); m.receiveShadow = true; this.group.add(m);
   }
 
+  // v1.5: several maps. build() tears down the previous one and builds the requested map (city / desert / base).
+  clear() {
+    for (const o of [...this.group.children]) { this.group.remove(o); if (o.isInstancedMesh) o.dispose(); else if (o.geometry && !o.userData.shared) o.geometry.dispose(); }
+    this.boxes = []; this.meshes = []; this.buildings = []; this.floorRects = []; this.carN = 0; this.inst = new Map();
+  }
   build(opts = {}) {
-    this.lite = !!opts.lite; // mobile: fewer distant buildings / decorative props
-    const A = ARENA; this.buildings = [];
+    this.lite = !!opts.lite; const map = opts.map || 'city';
+    this.clear(); this.mapId = map;
+    this.env = { sun: 0xfff0dc, sunI: 3.2, fogD: 0.0065, fogTint: null, hemiSky: 0xbcd0e6, hemiGround: 0x3a332c, hemiI: 0.35, envI: 0.75, bgI: 0.9, exposure: null, minimap: { bg: '#2b3036', roads: true, hi: '#8b9097', lo: '#626870' } };
+    if (map === 'desert') buildDesert(this); else if (map === 'base') buildBase(this); else this.buildCity();
+    this.finalizeInstances();
+    this.nav = new NavGrid(this.boxes, ARENA, 1, 0.55);
+    // never spawn anything inside a collider
+    const snap = (v) => { const c = this.nav.nearestFree(...this.nav.toCell(v.x, v.z)); if (!c) return v; const w = this.nav.toWorld(c[0], c[1]); const [i, j] = this.nav.toCell(v.x, v.z); return c[0] === i && c[1] === j ? v : w; };
+    this.enemySpawns = this.enemySpawns.map(snap); this.medkitSpots = this.medkitSpots.map(snap);
+    this.teamSpawns = this.teamSpawns.map(t => t.map(([x, z]) => { const v = snap(new THREE.Vector3(x, 0, z)); return [v.x, v.z]; }));
+  }
+  buildCity() {
+    const A = ARENA;
     const RW = 6, SW = 9.5; // road half-width, sidewalk outer edge
     // ground: asphalt everywhere (+ collider for bullet impacts)
     const gsz = 420;
@@ -362,9 +381,11 @@ export class World {
     this.container(-4.2, 41.5, false, 0x55603a, 0); // blocks half of the south road end
     for (const [x, z, c] of [[5, -24, 0x6a7f94], [5.6, -24.4, 0x9e3b2c], [-5.2, 27.5, 0x3d5d3a]]) this.barrel(x, z, c, 0);
 
-    this.finalizeInstances();
-    this.nav = new NavGrid(this.boxes, ARENA, 1, 0.55);
     this.playerSpawn = new THREE.Vector3(0, 0, 4);
+    this.teamSpawns = [[[-36, -38], [-12, -40], [20, -40], [0, -40], [-28.5, -26], [38, -22]], [[40, 30], [30, 40], [-38, 33], [-20, 42], [0, 40], [-40, 12]]];
+    this.vehicleSpawns = [[-3.3, 10, Math.PI], [16, -3.3, -Math.PI / 2]];
+    this.points = { extract: new THREE.Vector3(27, 0, -27), defend: new THREE.Vector3(0, 0, 0), hvt: new THREE.Vector3(-22, 0, -20), hvtGuard: [[-22, -24], [-14, -16], [-24, -12]] };
+    this.medkitSpots = [[0, -22], [22, 0], [-22, 0], [0, 24]].map(([x, z]) => new THREE.Vector3(x, 0, z));
     this.enemySpawns = [[-36, -38], [-12, -40], [38, -22], [20, -40], [40, 30], [30, 40], [-38, 33], [-20, 42], [0, -40], [40, 0], [0, 40], [-40, 0], [-28.5, -26]].map(([x, z]) => new THREE.Vector3(x, 0, z));
   }
 }

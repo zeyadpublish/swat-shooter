@@ -117,8 +117,8 @@ function holeRail(B, W, mat, h, y, openEnd) {
 export function enterable(W, spec) {
   const { x0, z0, x1, z1 } = spec, floors = spec.floors || 2, base = spec.base ?? 0.15;
   const B = new Batch({ x0: x0 + T, z0: z0 + T, x1: x1 - T, z1: z1 - T, top: base + floors * FH });
-  const ext = W.pbr('concrete_floor_worn_001', { color: spec.color ?? 0xf0e4cc, roughness: 1, normal: 1.2, env: 1.3 });
-  const intr = W.pbr('concrete_floor_worn_001', { color: spec.inner ?? 0xf2eee6, roughness: 1, normal: 0.8, env: 1.4 });
+  const ext = W.pbr(spec.extSet || 'concrete_floor_worn_001', { color: spec.color ?? 0xf0e4cc, roughness: 1, normal: 1.2, env: 1.3 });
+  const intr = W.pbr(spec.inSet || 'concrete_floor_worn_001', { color: spec.inner ?? 0xf2eee6, roughness: 1, normal: 0.8, env: 1.4 });
   const flo = W.pbr('square_concrete_pavers', { color: 0xc8c0b4 });
   const trim = W.pbr('concrete_floor_worn_001', { color: 0x8a847a });
   const steel = W.pbr('rusty_metal_02', { color: 0x3c3c3c });

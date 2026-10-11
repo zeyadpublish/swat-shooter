@@ -15,6 +15,7 @@
 <title>SWAT: Urban Siege</title>
 <link rel="preload" href="assets/fonts/rajdhani-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/teko-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/barlow-condensed-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">{"imports":{"three":"./libs/three/three.module.js","three/addons/":"./libs/three/addons/"}}</script>
 </head>
@@ -34,6 +35,7 @@
       <div class="chip gold" title="Score"><span data-icon="star"></span><b id="score">0</b></div>
     </div>
   </div>
+  <div id="compass"><div id="compstrip"></div><i class="cmark"></i><b id="compdeg">000</b></div>
   <div id="killfeed"></div>
   <div id="mpbar" class="hidden"><div class="team blue"><b id="scoreA">0</b><small id="nameA">BLUE</small></div><div id="mptimer">10:00</div><div class="team red"><b id="scoreB">0</b><small id="nameB">RED</small></div></div>
   <div id="nameplates"></div>
@@ -63,6 +65,10 @@
     <div id="wslots"></div>
     <div id="ammotoast">+AMMO</div>
   </div>
+  <div id="equip"><div id="medslot" title="Medkit (H)"><span class="mi" data-icon="cross"></span><b id="medn">1</b><kbd class="desktoponly">H</kbd><svg class="ring" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18"/></svg></div></div>
+  <div id="hudtoast"></div>
+  <div id="objective" class="hidden"></div>
+  <div id="rankup" class="hidden"></div>
   <div id="scope"><div class="lens"></div><div class="reticle"><i class="h"></i><i class="v"></i><i class="dot"></i><i class="m m1"></i><i class="m m2"></i><i class="m m3"></i></div></div>
   <div id="fps"></div>
   <div id="vehbox" class="hidden"></div>
@@ -71,19 +77,28 @@
     <div id="touchzone"></div>
     <div id="joybase"><span class="jar u" data-icon="chevron"></span><span class="jar r" data-icon="chevron"></span><span class="jar d" data-icon="chevron"></span><span class="jar l" data-icon="chevron"></span><div id="joyknob"></div><div id="joylock"><span data-icon="lock"></span><small>SPRINT</small></div></div>
     <div id="tbtns">
-      <button id="tFire" class="tb big fire" data-icon="fire" aria-label="Fire"></button>
-      <button id="tFireL" class="tb fire" data-icon="fire" aria-label="Fire (left)"></button>
-      <button id="tAim" class="tb toggle" data-icon="scope" aria-label="Aim"></button>
-      <button id="tReload" class="tb" aria-label="Reload"><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg><span data-icon="reload"></span></button>
-      <button id="tJump" class="tb" data-icon="jump" aria-label="Jump"></button>
-      <button id="tCrouch" class="tb toggle" data-icon="crouch" aria-label="Crouch"></button>
-      <button id="tSprint" class="tb toggle" data-icon="sprint" aria-label="Sprint"></button>
+      <button id="tFire" data-label="SHOOT" class="tb big fire" data-icon="fire" aria-label="Fire"></button>
+      <button id="tFireL" data-label="FIRE" class="tb fire" data-icon="fire" aria-label="Fire (left)"></button>
+      <button id="tAim" data-label="SCOPE" class="tb toggle" data-icon="scope" aria-label="Aim"></button>
+      <button id="tReload" data-label="RELOAD" class="tb" aria-label="Reload"><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg><span data-icon="reload"></span></button>
+      <button id="tJump" data-label="JUMP" class="tb" data-icon="jump" aria-label="Jump"></button>
+      <button id="tCrouch" data-label="CROUCH" class="tb toggle" data-icon="crouch" aria-label="Crouch"></button>
+      <button id="tSprint" data-label="RUN" class="tb toggle" data-icon="sprint" aria-label="Sprint"></button>
     </div>
-    <button id="tPause" class="tb small" data-icon="gear" aria-label="Pause / settings"></button>
-    <button id="tSwap" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
+    <button id="tPause" data-label="SETTINGS" class="tb small" data-icon="gear" aria-label="Pause / settings"></button>
+    <button id="tSwap" data-label="SWAP" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
     <button id="tScore" class="tb small mponly" data-icon="list" aria-label="Scoreboard"></button>
     <button id="tChat" class="tb small mponly" data-icon="chat" aria-label="Quick chat"></button>
-    <button id="tUse" class="tb" data-icon="car" aria-label="Enter / exit vehicle"></button>
+    <button id="tUse" data-label="DRIVE" class="tb" aria-label="Enter / exit vehicle"><span data-icon="car"></span><b id="tUseL">DRIVE</b></button>
+    <div id="drivepad">
+      <button id="tSteerL" class="tb dv steer" aria-label="Steer left"><span data-icon="chevron"></span></button>
+      <button id="tSteerR" class="tb dv steer" aria-label="Steer right"><span data-icon="chevron"></span></button>
+      <button id="tBrake" class="tb dv pedal" aria-label="Brake / reverse"><b>BRAKE</b><small>REV</small></button>
+      <button id="tGas" class="tb dv pedal gas" aria-label="Accelerate"><b>GAS</b></button>
+      <button id="tHorn" class="tb small dv" aria-label="Horn"><b>HORN</b></button>
+      <button id="tCam" class="tb small dv" aria-label="Camera distance"><b>CAM</b></button>
+    </div>
+    <button id="tMed" data-label="MEDKIT" class="tb small" aria-label="Use medkit"><span data-icon="cross"></span><b id="tMedN">1</b></button>
   </div>
 </div>
 <div id="tapsplash" class="hidden">
@@ -103,23 +118,71 @@
   </div>
 </div>
 
-<div id="menu" class="screen hidden">
-  <div class="logo"><div class="l1">SWAT</div><div class="l2">URBAN SIEGE</div><div class="ver">v1.4</div></div>
-  <div class="mbuttons">
-    <button id="btnPlay" class="mb primary"><span class="ic" data-icon="target"></span><span><b>PLAY SOLO</b><small>Survive endless waves</small></span></button>
-    <button id="btnMP" class="mb"><span class="ic" data-icon="users"></span><span><b>MULTIPLAYER</b><small>Team DM · Free-for-all · Co-op</small></span></button>
-    <button id="btnLoadout" class="mb"><span class="ic" data-icon="bullet"></span><span><b>LOADOUT</b><small id="loadoutsum">M4A1 + M1911</small></span></button>
-    <button id="btnSettings" class="mb"><span class="ic" data-icon="gear"></span><span><b>SETTINGS</b><small>Graphics · Controls · Audio</small></span></button>
-    <button class="mb appexit hidden"><span class="ic" data-icon="exit"></span><span><b>EXIT</b><small>Close the game</small></span></button>
+<div id="topbar" class="hidden">
+  <div class="tlogo"><b>SWAT</b><span>URBAN SIEGE</span></div>
+  <div class="ttabs"><kbd class="desktoponly">Q</kbd><button data-scr="menu">PLAY</button><button data-scr="loadout">WEAPONS</button><button data-scr="operators">OPERATORS</button><button data-scr="store">STORE</button><button data-scr="settings">SETTINGS</button><kbd class="desktoponly">E</kbd></div>
+  <div class="tright">
+    <div class="tcur" title="Medkits"><span data-icon="cross"></span><b id="topMed">1</b></div>
+    <div class="tcur coin" title="Coins"><i class="coinic"></i><b id="topCoins">0</b></div>
+    <div class="trank"><div class="rk" id="topRank">1</div><div class="rn"><b id="topName">Operator</b><small id="topRankN">RECRUIT</small><div class="rx"><i id="topXp"></i></div></div></div>
   </div>
-  <div class="foot">Operator <b id="menuname">—</b></div>
+</div>
+<div id="hintbar" class="hidden desktoponly"><span><kbd>ESC</kbd>BACK</span><span><kbd>Q</kbd><kbd>E</kbd>TABS</span></div>
+
+<div id="menu" class="screen hidden">
+  <div class="phead"><small>SWAT: URBAN SIEGE <span class="ver">v1.5</span></small><h1>PLAY</h1></div>
+  <div class="mbuttons">
+    <button id="btnCampaign" class="mcard"><span class="mt">CAMPAIGN</span><span class="ms" id="campSub">10 missions across 3 maps</span><span class="mtag">STORY</span></button>
+    <button id="btnPlay" class="mcard"><span class="mt">SOLO SURVIVAL</span><span class="ms" id="soloSub">Pick a map and hold out against endless waves</span><span class="mtag">SOLO</span></button>
+    <button id="btnMP" class="mcard"><span class="mt">MULTIPLAYER</span><span class="ms">Team Deathmatch · Free-for-all · Co-op · Bots</span><span class="mtag">ONLINE</span></button>
+    <button id="btnLoadout" class="mcard sm"><span class="mt">LOADOUT</span><span class="ms" id="loadoutsum">M4A1 + M1911</span></button>
+    <button id="btnSettings" class="mcard sm hidden"><span class="mt">SETTINGS</span></button>
+    <button class="mcard sm appexit hidden"><span class="mt">EXIT GAME</span><span class="ms">Close the game</span></button>
+  </div>
+  <div class="opplate"><small>OPERATOR</small><b id="menuOp">SWAT</b><span id="menuRole">Assaulter</span><span class="opname">Call sign <b id="menuname">—</b></span></div>
+</div>
+
+<div id="maps" class="screen hidden">
+  <div class="phead"><small>SOLO SURVIVAL · CHOOSE A MAP</small><h1>MAP SELECT</h1></div>
+  <div id="mapList" class="mapcards"></div>
+  <div class="scrfoot"><button class="ghost" data-back>BACK</button><button id="mapGo" class="primary">DEPLOY</button></div>
+</div>
+
+<div id="campaign" class="screen hidden">
+  <div class="phead"><small>CAMPAIGN · <b id="campStars">0 / 30</b> STARS</small><h1>CAMPAIGN</h1></div>
+  <div id="campList"></div>
+  <div class="scrfoot"><button class="ghost" data-back>BACK</button></div>
+</div>
+
+<div id="briefing" class="screen hidden">
+  <div class="brief">
+    <div class="bimg"><img id="brImg" alt=""><span id="brMap">URBAN SIEGE</span></div>
+    <div class="btxt">
+      <small id="brNum">MISSION 01</small><h1 id="brName">FIRST RESPONSE</h1><p id="brText"></p>
+      <div class="bcols"><div><h4>OBJECTIVES</h4><ol id="brObj"></ol></div><div><h4>STARS</h4><div id="brStars"></div></div></div>
+      <div class="brrew"><span>REWARD</span><b><i class="coinic"></i><span id="brCoins">0</span></b><b><span id="brXp">0</span> XP</b><em id="brNote"></em></div>
+      <div class="scrfoot"><button class="ghost" data-back>BACK</button><button id="brGo" class="primary">DEPLOY</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="operators" class="screen hidden">
+  <div class="phead"><small>CHOOSE YOUR OPERATOR</small><h1>OPERATORS</h1></div>
+  <div id="opList"></div>
+  <div id="opInfo"><small id="opRole">ASSAULTER</small><h2 id="opName">SWAT</h2><p id="opBlurb"></p><button id="opAct" class="primary wide">SELECT</button></div>
+</div>
+
+<div id="store" class="screen hidden">
+  <div class="phead"><small>SPEND COINS EARNED IN MATCHES</small><h1>STORE</h1></div>
+  <div id="storeGrid"></div>
+  <div class="storenote">Earn coins: kill +10 · headshot +5 · wave cleared +25 · match +30 · win +100 · kill streaks +15</div>
 </div>
 
 <div id="loadout" class="screen hidden full">
   <div class="sh"><button class="back" data-back>‹</button><h1>LOADOUT</h1><div class="tabs" id="loTabs"><button data-slot="0" class="on">PRIMARY</button><button data-slot="1">SECONDARY</button></div></div>
   <div class="lobody">
     <div id="loList"></div>
-    <div id="loInfo"><div id="loName">M4A1</div><div id="loClass">ASSAULT RIFLE</div><div id="loStats"></div><button id="loEquip" class="primary wide">EQUIP</button></div>
+    <div id="loInfo"><div id="loClass">ASSAULT RIFLE</div><div id="loName">M4A1</div><div id="loStats"></div><div id="loSpecs"></div><button id="loEquip" class="primary wide">EQUIP</button></div>
   </div>
   <div class="lofoot"><span>PRIMARY <b id="loP">M4A1</b></span><span>SECONDARY <b id="loS">M1911</b></span></div>
 </div>
@@ -142,7 +205,7 @@
         <label>Control layout <select id="optHand"><option value="right">Right-handed (fire on right)</option><option value="left">Left-handed (fire on left)</option></select></label>
         <label>Button opacity <input id="optBtnOp" type="range" min="0.25" max="1" step="0.05"><span id="valBtnOp"></span></label>
         <label class="check">Vibration (fire / hit) <input id="optHaptics" type="checkbox"></label>
-        <label>Touch buttons <button id="btnLayout" class="small">EDIT LAYOUT</button></label>
+        <label>Touch buttons <button id="btnLayout" class="small">CUSTOMIZE CONTROLS</button></label>
       </div>
       <table id="keys" class="desktoponly">
         <tr><td>W A S D</td><td>Move</td><td>Mouse</td><td>Look / aim</td></tr>
@@ -152,6 +215,7 @@
         <tr><td>1 / 2 / wheel</td><td>Weapons</td><td>Q</td><td>Last weapon</td></tr>
         <tr><td>V</td><td>Swap shoulder</td><td>Tab</td><td>Scoreboard</td></tr>
         <tr><td>Enter / T</td><td>Chat</td><td>Esc / P</td><td>Pause</td></tr>
+        <tr><td>H</td><td>Medkit</td><td>E / F</td><td>Enter / exit vehicle</td></tr>
       </table>
     </div>
     <div class="tab hidden" data-tab="aud">
@@ -164,13 +228,13 @@
       <label class="check">Damage numbers <input id="optDmgNum" type="checkbox"></label>
       <label class="check">Score (+XP) popups <input id="optXp" type="checkbox"></label>
       <label>Crosshair colour <select id="optXhair"><option value="#ffffff">White</option><option value="#4dff7a">Green</option><option value="#ffe14d">Yellow</option><option value="#ff4d6a">Red</option><option value="#4dd8ff">Cyan</option></select></label>
-      <label class="check">Solo: carry all six weapons <input id="optAllW" type="checkbox"></label>
+      <label class="check">Solo: carry all unlocked weapons <input id="optAllW" type="checkbox"></label>
     </div>
   </div>
 </div>
 
 <div id="layouted" class="hidden">
-  <div class="lebar"><span>Drag buttons to move them. Select one and use the slider to resize.</span><input id="leSize" type="range" min="0.6" max="1.6" step="0.05" value="1"><button id="leReset" class="small">RESET</button><button id="leDone" class="small primary">SAVE</button></div>
+  <div class="lebar"><b id="leName">TAP A CONTROL</b><label>SIZE <input id="leSize" type="range" min="0.5" max="1.8" step="0.05" value="1"></label><label>ALL <input id="leAll" type="range" min="0.6" max="1.5" step="0.05" value="1"></label><button id="leReset" class="small">RESET</button><button id="leCancel" class="small">CANCEL</button><button id="leDone" class="small primary">SAVE</button></div>
 </div>
 
 <div id="pause" class="screen hidden dim">
@@ -185,11 +249,16 @@
 </div>
 
 <div id="gameover" class="screen hidden dim">
-  <div class="sumbox">
-    <h1 id="sumTitle" class="red">K.I.A.</h1><div id="sumSub"></div>
-    <div id="stats"></div>
+  <div class="aar">
+    <div class="aarhead"><small id="sumSub"></small><h1 id="sumTitle" class="red">K.I.A.</h1></div>
+    <div class="aarcols">
+      <div class="aarp"><h4>COMBAT RECORD</h4><div id="stats"></div></div>
+      <div class="aarp"><h4>XP EARNED</h4><div id="xpLines"></div><div class="tot"><span>TOTAL XP</span><b id="xpTotal">+0</b></div>
+        <div class="rankbar"><div class="rkb" id="rkA">1</div><div class="rbar"><i id="rbPrev"></i><i id="rbGain"></i></div><div class="rkb next" id="rkB">2</div></div><div id="rankUp" class="hidden">RANK UP</div></div>
+      <div class="aarp"><h4>COINS EARNED</h4><div id="coinLines"></div><div class="tot"><span>TOTAL</span><b id="coinTotal" class="coin">+0</b></div><div class="bal">BALANCE <b id="coinBal">0</b></div></div>
+    </div>
     <div id="sumTable"></div>
-    <div class="row"><button id="btnRestart" class="primary">PLAY AGAIN</button><button id="btnMenu">MAIN MENU</button></div>
+    <div class="row"><button id="btnMenu">MAIN MENU</button><button id="btnRestart" class="primary">PLAY AGAIN</button></div>
   </div>
 </div>
 
@@ -212,6 +281,7 @@
   <div class="lobbybody">
     <div id="lobbyPlayers"></div>
     <div class="lobbyside">
+      <div class="lbmap"><img id="lbMapImg" alt=""><label>MAP <select id="lbMap"><option value="city">Urban Siege</option><option value="desert">Desert Town</option><option value="base">Military Base</option></select></label></div>
       <label>MODE <select id="lbMode"><option value="tdm">Team Deathmatch</option><option value="ffa">Free-for-all</option><option value="coop">Co-op Waves</option></select></label>
       <label>SCORE LIMIT <select id="lbScore"><option>15</option><option selected>30</option><option>50</option><option>75</option></select></label>
       <label>TIME LIMIT <select id="lbTime"><option value="180">3 min</option><option value="300" selected>5 min</option><option value="600">10 min</option></select></label>

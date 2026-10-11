@@ -92,6 +92,24 @@ Legs take 75–80% damage. Enemies have 100 HP. They carry an M4A1 or AKM at ran
 - **Loadout:** you carry one primary (M4A1, AKM, shotgun or SVD) and one secondary (M1911), chosen on the LOADOUT screen. Heavier guns move slightly slower. Settings → Gameplay → All weapons gives the full five-gun bar in solo play.
 - **Limitations:** there is no weapon pickup. The pistol reuses the rifle pose: the left hand stays where a rifle's handguard would be. Reloads are procedural tilts, not hand animations.
 
+## What's new in v1.5 (maps, campaign, ranks)
+- **Three maps:** Urban Siege (city), **Desert Town** (sand streets, mud-brick flat-roof houses with three enterable buildings, covered market stalls, compound walls, palms, burnt-out cars, sandbags, warm light and haze) and **Military Base** (perimeter fence, two hangars, four climbable watchtowers, container yard, two enterable barracks, helipad, parked trucks, drivable armoured vehicles, crates). Every map has colliders, bot navigation, medkit spots and vehicle spawns.
+- **Map select:** PLAY → SOLO SURVIVAL opens map cards (tap a card, tap again or DEPLOY to start). In multiplayer the host picks the map in the lobby and it is synced to everyone.
+- **Campaign:** PLAY → CAMPAIGN, 10 missions (4 city, 3 desert, 3 base) with a briefing screen. Objectives: clear the area, survive waves, eliminate a high-value target, reach extraction, defend a zone. Up to 3 stars per mission (complete it, beat the par time, finish with 50+ health). Clearing a mission unlocks the next. First clear pays the full coin and XP reward; replays pay 30%. Progress is saved on the device.
+- **Ranks:** the rank badge and rank name sit in the top bar; a RANK UP popup lists what was unlocked. Some operators and weapons need a rank before they can be bought (AKM rank 2, shotgun 3, SVD 5; Ranger 2, Viper 3, Sentinel 5, Warden 6, Recon 8, Sergeant 10).
+- **Customize controls:** Settings → CUSTOMIZE CONTROLS lets you drag every phone button and resize it.
+- Desert and base textures: Poly Haven (dense sand, clay plaster, dry ground), **CC0**.
+
+## What's new in v1.5 (stage A)
+- **Realistic operators:** the cartoon Quaternius characters are replaced by realistic Microsoft Rocketbox soldiers, police and civilians (MIT). The Mixamo SWAT clips are retargeted onto them at runtime with per-bone offsets; models are scaled so leg length matches the clips (no foot sliding). A two-bone IK solver puts every character's left hand on the weapon handguard, with fingers wrapped round it; the IK blends off during reloads, weapon swaps and healing.
+- **Operators:** 8 playable operators (SWAT and Breacher free; Ranger, Viper, Sentinel, Warden, Recon and Sergeant unlocked with coins). The selected operator stands in the 3D lobby and is used in solo and multiplayer (in Team Deathmatch the red team keeps red-team uniforms so teams stay readable).
+- **Crouch:** C or Ctrl (phones: crouch button), crouch-idle / crouch-walk animations, lower camera, tighter spread, synced in multiplayer.
+- **Medkits:** pickups on the map (respawn after 40 s) and from enemy drops; carry up to 3; press H (or the phone medkit button) to heal 60 HP over 2 s with an animation and sound. Buy more in the Store.
+- **Coins and rank:** earn coins and XP for kills (+10), headshots (+5), kill streaks (+15), waves (+25), finishing a match (+30) and wins (+100); saved on the device (localStorage). Rank goes up with XP.
+- **Store and Armory:** unlock the AKM (400), pump shotgun (600) and SVD (900), operators and medkits (150 each). Locked weapons show their price in the Weapons screen.
+- **Vehicles:** entering is animated: your operator walks to the driver's door and climbs in while the camera blends to the chase view (about 1 s); exiting reverses it and steps you out clear of the vehicle. The driver stays seated in the cab (also for other players in multiplayer). Desktop prompt: E ENTER / E EXIT, H horn, V camera distance. On phones the joystick and combat buttons are replaced while driving by STEER LEFT / RIGHT, GAS, BRAKE-REVERSE, EXIT, HORN and CAM buttons.
+- **New interface:** a top tab bar (PLAY / WEAPONS / OPERATORS / STORE / SETTINGS; Q / E switch tabs, Esc goes back), condensed uppercase type, flat dark panels, compass bar, kill feed top-left, ammo bottom-right, slim health bar, "+100 KILL" popups, a restyled scoreboard and an after-action report with XP and coin breakdown and a rank bar.
+
 ## What's new in v1.4
 - **More soldiers:** six CC0 Quaternius rigged characters (operator, militia, gunner, insurgent, raider, scout) in 13 palette looks, driven by the Mixamo SWAT clips retargeted at runtime. Enemies get a deterministic look per spawn (identical for every co-op player). TDM teams are clearly blue (blue operators / blue SWAT) vs red (red militia / gunners / operators); FFA mixes looks.
 - **Shooting feel:** short tracer streaks (~70 ms, pooled, never drawn into the camera), upper-body recoil kick, gun kick, camera shake, muzzle flash and ejected shells that land on the floor you stand on. Characters fire while walking or running (upper body aims, legs keep their locomotion clip), breathe and sway when idle, and crossfade between every state. Bodies sink away after ~6 s and are removed at 8 s.
@@ -171,7 +189,7 @@ ICE servers are read, in order, from `netconfig.json` (next to index.html), `loc
 index.html, style.css
 js/       main.js (game/renderer/HUD), ui.js (menus/settings/loadout), mp.js (multiplayer), net.js (PeerJS wrapper), world.js (city + colliders), character.js, player.js, enemy.js, physics.js, fx.js, audio.js
 libs/     three.js r170 + the addons it uses (MIT), peerjs 1.5.5 (MIT)
-assets/fonts/  Rajdhani, Teko (SIL OFL 1.1)
+assets/fonts/  Barlow Condensed, Rajdhani, Teko (SIL OFL 1.1)
 assets/   swat.glb, m4a1.glb, city/*.glb (meshopt-compressed, WebP textures), tex/*.webp, hdr/*.hdr
 start-windows.bat, start-mac-linux.sh   local launchers
 ```
@@ -183,7 +201,7 @@ start-windows.bat, start-mac-linux.sh   local launchers
 - **SVD Dragunov:** from "Various Small Arms (Assault Rifles, Sniper, Pistol)" by Tabasco, OpenGameArt (https://opengameart.org/content/various-small-arms-assault-rifles-sniper-pistol). The page lists **CC-BY 3.0 and CC0**, and the author put the models in the public domain on 2023-12-15. Credit: Tabasco. Recoloured wood and metal.
 - **M1911 pistol:** "Pistol" by loafbrr_1, OpenGameArt (https://opengameart.org/content/pistol-5). **CC0**.
 - **M4A1 rifle:** "M4A1 Assault Rifle" by 3DModelsCC0, via OpenGameArt (https://opengameart.org/content/m4a1-assault-rifle). **CC0**.
-- **v1.4 characters:** Quaternius character packs (via Poly Pizza / quaternius.com), **CC0**. Their own animations were stripped; the Mixamo SWAT clips are retargeted onto them at runtime. Recoloured in code.
+- **v1.5 characters:** Microsoft Rocketbox avatar library (github.com/microsoft/Microsoft-Rocketbox), **MIT License** (Copyright (c) 2020 Microsoft; text in `assets/chars/LICENSE-Rocketbox.txt`). Converted from FBX to glTF, simplified and recoloured in code; animated by retargeting the Mixamo SWAT clips at runtime. (The v1.4 Quaternius characters are no longer used.)
 - **v1.4 vehicles and cover:** armored pickup, armored truck, sandbag trenches and broken car by Quaternius (via Poly Pizza), **CC0**. Vehicles repainted olive/tan, wrecks scorched in code.
 - **City models:** Poly Haven (https://polyhaven.com), **CC0**. Includes modular_urban_apartments_facade, modular_factory_facade, street_lamp_01/02, fire_hydrant, metal_trash_can, concrete_road_barrier(_02), covered_car, rollershutter_door, exterior_aircon_unit, trashbag and old_tyre.
 - **Textures:** Poly Haven, **CC0**. Includes asphalt_02, square_concrete_pavers, concrete_floor_worn_001, corrugated_iron, rusty_metal_02 and plywood.
@@ -191,4 +209,4 @@ start-windows.bat, start-mac-linux.sh   local launchers
 - **HDRI:** Poly Haven, "Kloofendal 48d Partly Cloudy (Pure Sky)", **CC0**.
 - **Three.js:** MIT license (`libs/three/LICENSE`).
 - **PeerJS:** MIT license (`libs/peerjs/LICENSE`).
-- **Fonts:** Rajdhani (Indian Type Foundry) and Teko (The Teko Project Authors), SIL Open Font License 1.1 (`assets/fonts/OFL-*.txt`).
+- **Fonts:** Barlow Condensed (The Barlow Project Authors), Rajdhani (Indian Type Foundry) and Teko (The Teko Project Authors), SIL Open Font License 1.1 (`assets/fonts/OFL-*.txt`).

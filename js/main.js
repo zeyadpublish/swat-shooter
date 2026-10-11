@@ -9,8 +9,10 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { World, analyzeHDR } from './world.js';
+import { MAPS, MAP_BY_ID } from './maps.js';
+import { Campaign } from './campaign.js';
 import { raycastBoxes } from './physics.js';
-import { CharacterFactory, ENEMY_LOOKS, enemyLook } from './character.js';
+import { CharacterFactory, ENEMY_LOOKS, enemyLook, RIGS } from './character.js';
 import { FX } from './fx.js';
 import { Vehicles } from './vehicle.js';
 import { Sfx } from './audio.js';
@@ -24,6 +26,8 @@ import { asset, MOBILE_ASSETS } from './assets.js';
 import { UI, cleanName, esc } from './ui.js';
 import { MP } from './mp.js';
 import { PRIMARIES, SECONDARIES } from './weapons.js';
+import { prog, save as saveProg, addCoins, addXP, levelOf, owns, COINS, fmt , rankName, RANK_REQ } from './prog.js';
+import { Meta } from './meta.js';
 
 const $ = (id) => document.getElementById(id);
 const QUALITY = {
@@ -79,12 +83,28 @@ class HUD {
     let big = null, small = '';
     if (L === 5) { big = 'KILLING SPREE'; small = '5 KILLS'; } else if (L === 10) { big = 'UNSTOPPABLE'; small = '10 KILLS'; } else if (L === 15) { big = 'GODLIKE'; small = '15 KILLS'; }
     else if (n === 2) { big = 'DOUBLE KILL'; } else if (n === 3) { big = 'TRIPLE KILL'; } else if (n >= 4) { big = 'MULTI KILL'; small = n + ' KILLS'; }
-    if (big) { $('streak').innerHTML = `<div class="sk">${big}${small ? `<small>${small}</small>` : ''}</div>`; this.g.sfx.streak(Math.min(4, n >= 2 ? n - 1 : L / 5)); }
-    if (this.g.settings.xp) this.popup(`+${pts}${head ? ' HEADSHOT' : ''}`, head);
+    const g = this.g; g.earn.kills++; if (head) g.earn.hs++;
+    g.reward(COINS.kill + (head ? COINS.headshot : 0), 100 + (head ? 50 : 0));
+    if (big) {
+      const sxp = { 'DOUBLE KILL': 50, 'TRIPLE KILL': 100, 'MULTI KILL': 150, 'KILLING SPREE': 250, UNSTOPPABLE: 500, GODLIKE: 750 }[big] || 50;
+      g.earn.streakXP += sxp; g.earn.streakCoins += COINS.streak; g.reward(COINS.streak, sxp);
+      $('streak').innerHTML = `<div class="sk">${big}<small>${small ? small + ' · ' : ''}+${sxp} XP</small></div>`; g.sfx.streak(Math.min(4, n >= 2 ? n - 1 : L / 5));
+    }
+    if (g.settings.xp) { this.popup(`<b>+100</b> KILL`); if (head) this.popup(`<b>+50</b> HEADSHOT`, true); }
   }
-  popup(text, hs) {
-    const d = document.createElement('div'); d.className = 'xp' + (hs ? ' hs' : ''); d.textContent = text;
-    d.style.top = (-10 + $('popups').children.length * 24) + 'px'; $('popups').appendChild(d); setTimeout(() => d.remove(), 1150);
+  popup(html, hs) {
+    const d = document.createElement('div'); d.className = 'xp' + (hs ? ' hs' : ''); d.innerHTML = html;
+    d.style.top = (-10 + $('popups').children.length * 22) + 'px'; $('popups').appendChild(d); setTimeout(() => d.remove(), 1400);
+  }
+  toast(text, cls = '') { const t = $('hudtoast'); t.textContent = text; t.className = 'on ' + cls; clearTimeout(this.toastT2); this.toastT2 = setTimeout(() => t.className = '', 1400); }
+  // compass strip: 15° ticks, cardinal letters, numeric heading
+  compass() {
+    const yaw = this.g.player.yaw, deg = ((-yaw * 180 / Math.PI) % 360 + 360) % 360;
+    if (!this.compBuilt) {
+      let h = ''; for (let a = -360; a <= 720; a += 15) { const n = ((a % 360) + 360) % 360, lab = { 0: 'N', 90: 'E', 180: 'S', 270: 'W' }[n]; h += `<span style="left:${(a + 360) * 4}px" class="${lab ? 'c' : n % 45 === 0 ? 'm' : ''}">${lab || (n % 45 === 0 ? n : '')}</span>`; }
+      $('compstrip').innerHTML = h; this.compBuilt = true;
+    }
+    if (this.last.deg !== Math.round(deg)) { this.last.deg = Math.round(deg); $('compstrip').style.transform = `translateX(${-(deg + 360) * 4}px)`; $('compdeg').textContent = String(Math.round(deg) % 360).padStart(3, '0'); }
   }
   damageNumber(point, dmg, head) {
     if (!this.g.settings.dmgNum || !point) return;
@@ -126,14 +146,16 @@ class HUD {
   // static top-down map of the city (buildings + roads) for the radar
   buildMap() {
     const S = 4, N = 150, c = document.createElement('canvas'); c.width = c.height = N * 2 * S; const x = c.getContext('2d');
-    x.fillStyle = '#2b3036'; x.fillRect(0, 0, c.width, c.height);
+    const mm = this.g.world.env.minimap;
+    x.fillStyle = mm.bg; x.fillRect(0, 0, c.width, c.height);
     const P = (v) => (v + N) * S;
-    x.fillStyle = '#4a5058'; x.fillRect(P(-6), 0, 12 * S, c.height); x.fillRect(0, P(-6), c.width, 12 * S); // roads
-    x.fillStyle = 'rgba(255,214,90,.55)'; x.fillRect(P(-0.2), 0, 0.4 * S, c.height); x.fillRect(0, P(-0.2), c.width, 0.4 * S);
+    if (mm.roads) { x.fillStyle = '#4a5058'; x.fillRect(P(-6), 0, 12 * S, c.height); x.fillRect(0, P(-6), c.width, 12 * S); // roads
+      x.fillStyle = 'rgba(255,214,90,.55)'; x.fillRect(P(-0.2), 0, 0.4 * S, c.height); x.fillRect(0, P(-0.2), c.width, 0.4 * S); }
+    else { x.fillStyle = 'rgba(0,0,0,.18)'; x.fillRect(P(-4.5), 0, 9 * S, c.height); x.fillRect(0, P(-4), c.width, 8 * S); }
     for (const b of this.g.world.boxes) {
       const h = b.max.y - b.min.y, w = b.max.x - b.min.x, d = b.max.z - b.min.z;
       if (b.min.y > 0.5 || w * d > 6000 || h < 0.6) continue;
-      x.fillStyle = h > 4 ? '#8b9097' : '#626870';
+      x.fillStyle = h > 4 ? mm.hi : mm.lo;
       x.fillRect(P(b.min.x), P(b.min.z), w * S, d * S);
       if (h > 4) { x.strokeStyle = 'rgba(0,0,0,.45)'; x.lineWidth = 2; x.strokeRect(P(b.min.x), P(b.min.z), w * S, d * S); }
     }
@@ -164,6 +186,9 @@ class HUD {
       ctx.fillStyle = o.color; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(dx, dz, out ? 5 : 8 + (o.pulse ? Math.sin(g.time * 12) * 2 : 0), 0, 7); ctx.fill(); ctx.stroke();
     }
+    { const o = g.campaign && g.campaign.radarPoint(); if (o) { // campaign objective marker (gold diamond, clamped to the edge)
+      let dx = (o.x - p.pos.x) * k, dz = (o.z - p.pos.z) * k; const m = Math.hypot(dx, dz), lim = W / 2 - 12; if (m > lim) { dx *= lim / m; dz *= lim / m; }
+      ctx.save(); ctx.translate(dx, dz); ctx.rotate(-p.yaw + Math.PI / 4); ctx.fillStyle = '#e4c45a'; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 3; ctx.fillRect(-9, -9, 18, 18); ctx.strokeRect(-9, -9, 18, 18); ctx.restore(); } }
     for (const it of g.pickups ? g.pickups.items : []) {
       let dx = (it.pos.x - p.pos.x) * k, dz = (it.pos.z - p.pos.z) * k; const m = Math.hypot(dx, dz), lim = W / 2 - 9;
       if (m > lim) { dx *= lim / m; dz *= lim / m; }
@@ -232,6 +257,11 @@ class HUD {
     }
     this.feedItems = (this.feedItems || []).filter(f => f.d.isConnected);
     this.radarT = (this.radarT || 0) - dt; if (this.radarT <= 0) { this.radarT = 1 / 20; this.drawRadar(); }
+    this.compass();
+    // medkit slot
+    const mk = p.medkits; if (this.last.mk !== mk) { this.last.mk = mk; $('medn').textContent = mk; $('tMedN').textContent = mk; $('medslot').classList.toggle('empty', mk <= 0); $('tMed').classList.toggle('empty', mk <= 0); }
+    const healing = p.healT > 0; $('medslot').classList.toggle('on', healing); $('tMed').classList.toggle('on', healing);
+    if (healing) $('medslot').style.setProperty('--p', (1 - p.healT / 2).toFixed(3));
     if (g.touch) g.touch.update();
   }
 }
@@ -270,12 +300,11 @@ class Game {
     const glLoader = new GLTFLoader(mgr); glLoader.setMeshoptDecoder(MeshoptDecoder);
     const gltfP = glLoader.loadAsync(asset('assets/swat.glb'), (e) => { if (e.total) $('loadtxt').textContent = `Loading operator ${(e.loaded / e.total * 100) | 0}%`; });
     const gunP = Promise.all(WEAPONS.map(w => glLoader.loadAsync(asset(w.file))));
-    const RIGS = ['q_swat', 'q_adv', 'q_worker', 'q_hoodie', 'q_punk', 'q_casual'];
     const rigP = Promise.all(RIGS.map(n => glLoader.loadAsync(asset('assets/chars/' + n + '.glb'))));
     const hdrP = new RGBELoader(mgr).loadAsync(asset('assets/hdr/kloofendal_48d_partly_cloudy_puresky.hdr'));
     const cityLoader = new GLTFLoader(mgr); cityLoader.setMeshoptDecoder(MeshoptDecoder);
     await this.world.loadCity(cityLoader);
-    this.world.build({ lite: this.lite });
+    this.world.build({ lite: this.lite, map: 'city' });
     const [gltf, hdr, gun, rigs] = await Promise.all([gltfP, hdrP, gunP, rigP]);
     // lighting from HDR
     hdr.mapping = THREE.EquirectangularReflectionMapping;
@@ -288,7 +317,7 @@ class Game {
     const sc = sun.shadow.camera; sc.left = -62; sc.right = 62; sc.top = 62; sc.bottom = -62; sc.near = 1; sc.far = 260;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 2;
     this.scene.add(sun, sun.target); this.sunOffset = sun.position.clone();
-    this.scene.add(new THREE.HemisphereLight(0xbcd0e6, 0x3a332c, 0.35));
+    this.hemi = new THREE.HemisphereLight(0xbcd0e6, 0x3a332c, 0.35); this.scene.add(this.hemi); this.baseFog = fogC.clone(); this.applyEnv();
     // characters
     const gunScenes = {}; WEAPONS.forEach((w, i) => gunScenes[w.id] = gun[i].scene);
     const extra = {}; RIGS.forEach((n, i) => extra[n] = rigs[i]);
@@ -303,7 +332,9 @@ class Game {
     this.ui.progress(0.95, 'Preparing the city…');
     this.setupPost(); this.applySettings();
     this.mp = new MP(this);
-    this.bindUI(); this.bindInput();
+    this.campaign = new Campaign(this);
+    this.meta = new Meta(this); this.bindUI(); this.bindInput(); this.resetEarn();
+    this.setPlayerTint(this.opLook());
     if (MOBILE) { this.touch = new TouchControls(this); this.ui.applyLayout(); }
     addEventListener('resize', () => this.relayout());
     if (window.visualViewport) visualViewport.addEventListener('resize', () => this.relayout());
@@ -356,13 +387,38 @@ class Game {
     $('resinfo').textContent = `Rendering at ${Math.round(w * pr)} × ${Math.round(h * pr)} px (pixel ratio ${pr.toFixed(2)})`;
   }
   showScreen(id) { this.ui.show(id); }
+  // economy: coins + XP are saved as they are earned; the match tally feeds the after-action report
+  // v1.5 maps: rebuild the world for another map (solo, campaign, multiplayer host choice synced to clients)
+  setMap(id) {
+    id = MAP_BY_ID[id] ? id : 'city'; if (this.world.mapId === id) return false;
+    this.world.build({ lite: this.lite, map: id });
+    if (this.vehicles) this.vehicles.setSpawns(this.world.vehicleSpawns);
+    this.hud.map = null; this.applyEnv(); if (this.fx && this.fx.decals) for (const d of this.fx.decals) d.visible = false;
+    if (this.player && this.state === 'menu') { this.player.reset(this.world.playerSpawn); this.menuPose && this.menuPose(); }
+    return true;
+  }
+  applyEnv() {
+    const e = this.world.env; if (!this.sun || !e) return;
+    this.sun.color.set(e.sun); this.sun.intensity = e.sunI; this.hemi.color.set(e.hemiSky); this.hemi.groundColor.set(e.hemiGround); this.hemi.intensity = e.hemiI;
+    this.scene.fog.color.copy(e.fogTint != null ? new THREE.Color(e.fogTint) : this.baseFog); this.scene.fog.density = e.fogD;
+    this.scene.environmentIntensity = e.envI; this.scene.backgroundIntensity = e.bgI;
+  }
+  resetEarn() { this.earn = { kills: 0, hs: 0, waves: 0, streakXP: 0, streakCoins: 0, coins: 0, xp: 0, startXP: prog().xp }; }
+  reward(coins, xp) { if (!this.earn) this.resetEarn(); this.earn.coins += coins; this.earn.xp += xp; addCoins(coins); const r = addXP(xp); if (r.up) this.rankUp(r.after.lv); }
+  rankUp(lv) {
+    const un = Object.entries(RANK_REQ).flatMap(([k, o]) => Object.entries(o).filter(([, v]) => v === lv).map(([id]) => k === 'gun' ? (WEAPON_BY_ID[id] || {}).name : id.toUpperCase())).filter(Boolean);
+    const el = $('rankup'); el.innerHTML = `<div class="rkb">${lv}</div><div><small>RANK UP</small><b>${rankName(lv)}</b>${un.length ? `<span>UNLOCKED: ${un.join(' · ')}</span>` : ''}</div>`;
+    el.classList.remove('hidden', 'go'); void el.offsetWidth; el.classList.add('go'); clearTimeout(this.rkT); this.rkT = setTimeout(() => el.classList.add('hidden'), 4200); this.sfx.ui('select');
+  }
+  opLook() { const o = prog().op; return !o || o === 'swat' ? null : o; }
   saveSettings() { localStorage.setItem('swat-settings', JSON.stringify(this.settings)); }
   inMatch() { return this.state === 'playing' || this.state === 'paused'; }
   // weapons carried: primary + secondary (solo option: all six)
   loadoutIds() {
     const s = this.settings;
-    if (s.allWeapons && !(this.mp && this.mp.active)) return [s.primary, ...WEAPONS.map(w => w.id).filter(id => id !== s.primary)];
-    return [s.primary, s.secondary];
+    const pri = owns('gun', s.primary) ? s.primary : 'm4a1', sec = owns('gun', s.secondary) ? s.secondary : 'pistol';
+    if (s.allWeapons && !(this.mp && this.mp.active)) return [pri, ...WEAPONS.map(w => w.id).filter(id => id !== pri && owns('gun', id))];
+    return [pri, sec];
   }
   // menu backdrop: the operator in the idle aiming pose on the street
   menuPose() { const p = this.player; p.c.aimPitch = 0; p.c.yaw = 0.35; p.c.play('idle aiming', { fade: 0.3 }); p.c.root.visible = true; }
@@ -374,11 +430,11 @@ class Game {
   }
   bindUI() {
     this.ui.bindSettings(); this.ui.bindLoadout();
-    $('btnPlay').onclick = () => this.startGame();
+    $('btnPlay').onclick = () => this.ui.show('maps');
     $('btnResume').onclick = () => this.resume();
-    $('btnRestart').onclick = () => { if (this.mp.role) this.mp.backToLobby(); else this.startGame(); };
+    $('btnRestart').onclick = () => { if (this.mp.role) this.mp.backToLobby(); else if (this.campaign.cur) { const n = this.campaign.win && this.campaign.nextMission(); this.campaign.start(n ? n.id : this.campaign.cur.id); } else this.startGame(); };
     $('btnQuit').onclick = () => { if (this.mp.role) this.mp.leave(); else this.toMenu(); };
-    $('btnMenu').onclick = () => { if (this.mp.role) this.mp.leave(); else this.toMenu(); };
+    $('btnMenu').onclick = () => { if (this.mp.role) this.mp.leave(); else { const c = !!this.campaign.cur; this.toMenu(); if (c) this.ui.show('campaign'); } };
   }
   lock() { this.sfx.init(); if (MOBILE) return; try { const p = this.canvas.requestPointerLock({ unadjustedMovement: true }); if (p && p.catch) p.catch(() => { try { this.canvas.requestPointerLock(); } catch (e) {} }); } catch (e) {} }
   bindInput() {
@@ -391,7 +447,9 @@ class Game {
       this.input.keys[e.code] = true;
       if (e.code === 'Space') { this.input.jumpPressed = true; e.preventDefault(); }
       if (e.code === 'KeyR') this.input.reloadPressed = true;
-      if (e.code === 'KeyE' && !e.repeat) this.input.usePressed = true;
+      if ((e.code === 'KeyE' || e.code === 'KeyF') && !e.repeat) this.input.usePressed = true;
+      if (e.code === 'KeyH' && !e.repeat) { if (this.player.vehicle) this.sfx.horn(); else this.input.medkitPressed = true; }
+      if (e.code === 'KeyV' && !e.repeat && this.player.vehicle) this.driveCamFar = !this.driveCamFar;
       if (e.code === 'KeyC' && !e.repeat) this.player.crouchToggle = !this.player.crouchToggle;
       if (e.code === 'KeyV' && !e.repeat) this.shoulder *= -1;
       if (e.code === 'KeyQ' && !e.repeat) this.player.lastWeapon();
@@ -431,21 +489,21 @@ class Game {
     this.player.pitch = THREE.MathUtils.clamp(this.player.pitch, -1.15, 1.2);
   }
   startGame() {
-    this.sfx.init(); this.setPlayerTint(null); this.mpPaused = false;
+    this.sfx.init(); this.setPlayerTint(this.opLook()); this.mpPaused = false; this.resetEarn();
     for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = [];
-    this.vehicles.reset(); this.player.reset(this.world.playerSpawn); this.player.c.root.visible = true; this.pickups.clear(); this.hud.weaponChanged(); this.hud.resetMatch();
+    this.vehicles.reset(); this.player.reset(this.world.playerSpawn); this.player.c.root.visible = true; this.pickups.clear(); this.pickups.placeSpots(this.world.medkitSpots); this.hud.weaponChanged(); this.hud.resetMatch();
     this.kills = 0; this.score = 0; this.wave = 0; this.waveKills = 0; this.waveTotal = 0; this.intermission = 0; this.gameOverT = -1; this.startT = this.time;
     this.input.keys = {}; this.input.fire = this.input.aim = false;
     this.state = 'playing'; this.showScreen(null); this.hadLock = false;
     if (!this.testMode) this.lock();
     if (MOBILE) { this.touch.reset(); if (!this.testMode) goFullscreenLandscape(); }
-    this.nextWave();
+    if (this.campaign.cur) this.campaign.begin(); else this.nextWave();
   }
   // multiplayer match start (called by MP for host and clients)
   startMP(mode, spawn, yaw, tint, isHost) {
-    this.sfx.init(); this.setPlayerTint(tint); this.mpPaused = false;
+    this.sfx.init(); this.setPlayerTint(tint); this.mpPaused = false; this.resetEarn();
     for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = [];
-    this.vehicles.reset(); this.player.respawn(spawn, yaw); this.player.shots = this.player.hits = this.player.headshots = 0; this.pickups.clear(); this.hud.resetMatch(); this.hud.weaponChanged();
+    this.vehicles.reset(); this.player.respawn(spawn, yaw); this.player.shots = this.player.hits = this.player.headshots = 0; this.pickups.clear(); this.pickups.placeSpots(this.world.medkitSpots); this.hud.resetMatch(); this.hud.weaponChanged();
     this.kills = 0; this.score = 0; this.wave = 0; this.waveKills = 0; this.waveTotal = 0; this.intermission = 0; this.gameOverT = -1; this.startT = this.time;
     this.input.keys = {}; this.input.fire = this.input.aim = false;
     this.state = 'playing'; this.showScreen(null); this.hadLock = false;
@@ -453,19 +511,34 @@ class Game {
     $('quitlbl').textContent = isHost ? 'END & CLOSE ROOM' : 'LEAVE MATCH';
     if (mode === 'coop' && isHost) this.nextWave();
   }
-  // multiplayer match over: summary with the standings
+  // multiplayer match over: after-action report with the standings
   endMP(r) {
     this.state = 'gameover'; this.mpPaused = false; this.input.fire = this.input.aim = false; if (document.pointerLockElement) document.exitPointerLock();
     const p = this.player, acc = p.shots ? Math.round(p.hits / p.shots * 100) : 0, m = r.mine;
-    $('sumTitle').textContent = r.title; $('sumTitle').className = r.won ? 'gold' : r.mode === 'tdm' && r.title.startsWith('BLUE') ? 'blue' : 'red';
-    $('sumSub').textContent = (r.won ? 'VICTORY · ' : r.mode !== 'coop' ? 'DEFEAT · ' : '') + r.sub;
-    this.summaryCards([['KILLS', m[3] ?? 0, true], ['DEATHS', m[4] ?? 0], ['HEADSHOTS', p.headshots], ['ACCURACY', acc + '%'], ['SCORE', m[5] ?? 0, true]]);
+    if (!this.earn.ended) { this.earn.ended = true; this.earn.match = true; this.reward(COINS.match, 200); if (r.won) { this.earn.win = true; this.reward(COINS.win, 500); } const P = prog(); P.matches++; if (r.won) P.wins++; P.kills += m[3] ?? 0; P.deaths += m[4] ?? 0; P.headshots += p.headshots; P.bestStreak = Math.max(P.bestStreak, this.hud.bestStreak); saveProg(); }
+    $('sumTitle').textContent = r.won ? 'VICTORY' : r.mode === 'coop' ? 'MATCH OVER' : 'DEFEAT'; $('sumTitle').className = r.won ? 'gold' : 'red';
+    $('sumSub').textContent = r.title + ' · ' + r.sub;
+    const kd = (m[4] ?? 0) ? ((m[3] ?? 0) / m[4]).toFixed(2) : String(m[3] ?? 0);
+    this.summaryCards([['KILLS', m[3] ?? 0, true], ['DEATHS', m[4] ?? 0], ['K/D', kd], ['HEADSHOTS', p.headshots], ['ACCURACY', acc + '%'], ['SCORE', m[5] ?? 0, true]]);
     const rows = r.rows.slice().sort((a, b) => b[5] - a[5] || b[3] - a[3]);
-    $('sumTable').innerHTML = `<table><tr><th>PLAYER</th>${r.mode === 'tdm' ? '<th>TEAM</th>' : ''}<th>K</th><th>D</th><th>HS</th><th>ACC</th><th>SCORE</th></tr>${rows.map(x => `<tr class="${x[0] === r.myId ? 'me' : ''}"><td>${esc(x[1])}</td>${r.mode === 'tdm' ? `<td style="color:${x[2] ? '#ff8f80' : '#8cc6ff'}">${x[2] ? 'RED' : 'BLUE'}</td>` : ''}<td>${x[3]}</td><td>${x[4]}</td><td>${x[6]}</td><td>${x[7]}%</td><td>${x[5]}</td></tr>`).join('')}</table>`;
+    $('sumTable').innerHTML = `<table><tr><th>#</th><th>PLAYER</th>${r.mode === 'tdm' ? '<th>TEAM</th>' : ''}<th>SCORE</th><th>K</th><th>D</th><th>HS</th><th>ACC</th></tr>${rows.map((x, i) => `<tr class="${x[0] === r.myId ? 'me' : ''}${r.mode === 'tdm' ? (x[2] ? ' red' : ' blue') : ''}"><td>${i + 1}</td><td>${esc(x[1])}</td>${r.mode === 'tdm' ? `<td>${x[2] ? 'RED' : 'BLUE'}</td>` : ''}<td>${x[5]}</td><td>${x[3]}</td><td>${x[4]}</td><td>${x[6]}</td><td>${x[7]}%</td></tr>`).join('')}</table>`;
+    $('sumTable').classList.remove('hidden');
     $('btnRestart').textContent = 'BACK TO LOBBY'; $('btnMenu').textContent = this.mp.isHost ? 'CLOSE ROOM' : 'LEAVE ROOM';
-    this.showScreen('gameover'); this.sfx.ui(r.won ? 'select' : 'back');
+    this.fillAAR(); this.showScreen('gameover'); this.sfx.ui(r.won ? 'select' : 'back');
   }
-  summaryCards(list) { $('stats').innerHTML = list.map(([k, v, hl], i) => `<div class="sc${hl ? ' hl' : ''}" style="animation-delay:${i * 0.07}s"><small>${k}</small><b>${v}</b></div>`).join(''); }
+  summaryCards(list) { $('stats').innerHTML = list.map(([k, v, hl], i) => `<div class="sc${hl ? ' hl' : ''}" style="animation-delay:${i * 0.06}s"><small>${k}</small><b>${v}</b></div>`).join(''); }
+  // XP / coin breakdown + animated rank bar
+  fillAAR() {
+    const e = this.earn, line = (k, v, cls = '') => `<div class="ln ${cls}"><span>${k}</span><b>+${fmt(v)}</b></div>`;
+    $('xpLines').innerHTML = (e.kills ? line(`Kills × ${e.kills}`, e.kills * 100) : '') + (e.hs ? line(`Headshots × ${e.hs}`, e.hs * 50) : '') + (e.streakXP ? line('Kill streaks', e.streakXP) : '') + (e.waves ? line(`Waves cleared × ${e.waves}`, e.waves * 150) : '') + (e.mission ? line('Mission · ' + e.mission.name, e.mission.xp) : '') + (e.match ? line('Match completed', 200) : '') + (e.win ? line('Victory', 500) : '') || '<div class="ln none"><span>No XP this time</span></div>';
+    $('xpTotal').textContent = '+' + fmt(e.xp);
+    $('coinLines').innerHTML = (e.kills ? line(`Kills × ${e.kills}`, e.kills * COINS.kill) : '') + (e.hs ? line(`Headshots × ${e.hs}`, e.hs * COINS.headshot) : '') + (e.streakCoins ? line('Kill streaks', e.streakCoins) : '') + (e.waves ? line(`Waves × ${e.waves}`, e.waves * COINS.wave) : '') + (e.mission ? line('Mission · ' + e.mission.name, e.mission.coins) : '') + (e.match ? line('Match completed', COINS.match) : '') + (e.win ? line('Victory', COINS.win) : '') || '<div class="ln none"><span>No coins this time</span></div>';
+    $('coinTotal').textContent = '+' + fmt(e.coins); $('coinBal').textContent = fmt(prog().coins);
+    const A = levelOf(e.startXP), B = levelOf(prog().xp), up = B.lv > A.lv;
+    $('rkA').textContent = B.lv; $('rkB').textContent = B.lv + 1; $('rankUp').classList.toggle('hidden', !up); if (up) $('rankUp').textContent = `RANK UP · ${B.lv} · ${rankName(B.lv)}`;
+    const prev = up ? 0 : A.frac; $('rbPrev').style.width = (prev * 100).toFixed(1) + '%'; $('rbGain').style.width = '0%';
+    setTimeout(() => { $('rbGain').style.width = (Math.max(0, B.frac - prev) * 100).toFixed(1) + '%'; }, 350);
+  }
   waveStats() { const p = this.player; return { kills: this.kills, shots: p.shots, hits: p.hits, hs: p.headshots, score: this.score }; }
   nextWave() {
     this.wave++; this.waveKills = 0; this.spawned = 0; this.spawnT = 1.5;
@@ -481,7 +554,7 @@ class Game {
     if (this.state !== 'playing' || this.mpPaused) return;
     this.input.keys = {}; this.input.fire = this.input.aim = false; if (document.pointerLockElement) document.exitPointerLock();
     if (this.mp.active) { this.mpPaused = true; $('pauseinfo').textContent = 'MATCH IS STILL RUNNING · ROOM ' + this.mp.code; this.showScreen('pause'); return; }
-    this.state = 'paused'; $('pauseinfo').textContent = `WAVE ${this.wave} · ${this.kills} KILLS · SCORE ${this.score}`; $('quitlbl').textContent = 'QUIT TO MENU'; this.showScreen('pause');
+    this.state = 'paused'; $('pauseinfo').textContent = `WAVE ${this.wave} · ${this.kills} KILLS · SCORE ${this.score}`; if (this.campaign.cur) $('pauseinfo').textContent = `${this.campaign.cur.name} · ${this.kills} KILLS`; $('quitlbl').textContent = 'QUIT TO MENU'; this.showScreen('pause');
   }
   resume() {
     if (this.mpPaused) { this.mpPaused = false; this.showScreen(null); this.hadLock = false; if (!this.testMode) this.lock(); if (MOBILE) { this.touch.reset(); if (!this.testMode) goFullscreenLandscape(); } return; }
@@ -489,42 +562,59 @@ class Game {
   }
   toMenu(keepRoom) {
     if (!keepRoom && this.mp.role && !this.mp.leaving) { this.mp.leave(); return; }
-    this.state = 'menu'; this.mpPaused = false; for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = []; this.pickups.clear();
-    this.vehicles.reset(); this.setPlayerTint(null); this.player.reset(this.world.playerSpawn); this.hud.weaponChanged(); this.menuPose();
+    this.campaign.stop(); this.state = 'menu'; this.mpPaused = false; for (const e of this.enemies) e.c.dispose(this.scene); this.enemies = []; this.pickups.clear();
+    this.vehicles.reset(); this.setPlayerTint(this.opLook()); this.player.reset(this.world.playerSpawn); this.hud.weaponChanged(); this.menuPose();
     $('btnRestart').textContent = 'PLAY AGAIN'; $('btnMenu').textContent = 'MAIN MENU'; $('sumTable').innerHTML = '';
     if (!keepRoom) this.showScreen('menu'); if (document.pointerLockElement) document.exitPointerLock();
   }
   alert(pos, r) { for (const e of this.enemies) if (!e.dead && e.pos.distanceTo(pos) < r) e.alert(); }
-  spawnEnemy() {
+  spawnEnemy(at, forceLook) {
     const p = this.player.pos;
     const cands = this.world.enemySpawns.filter(s => s.distanceTo(p) > 20 && !this.enemies.some(e => !e.dead && e.pos.distanceTo(s) < 1.5));
     const list = cands.length ? cands : this.world.enemySpawns;
-    const sp = list[(Math.random() * list.length) | 0].clone().add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5));
+    const sp = at ? at.clone() : list[(Math.random() * list.length) | 0].clone().add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5));
     const nid = this.nextNid = (this.nextNid || 0) + 1; // the look follows the network id so co-op clients see the same soldier
-    const look = this.forceLook !== undefined ? this.forceLook : enemyLook(nid);
+    const look = forceLook || (this.forceLook !== undefined ? this.forceLook : enemyLook(nid));
     const c = this.factory.create(look ? { look } : { tint: TINTS[nid % TINTS.length] }); this.scene.add(c.root);
-    const e = new Enemy(this, c, sp, this.wave); e.nid = nid; this.enemies.push(e); this.spawned++;
+    const e = new Enemy(this, c, sp, this.wave); e.nid = nid; this.enemies.push(e); this.spawned++; return e;
   }
   onEnemyKilled(e, head) {
     this.waveKills++;
     if (this.mp.active) { this.mp.onEnemyKilled(e, head); return; } // co-op host: credit whoever fired
+    if (this.campaign.cur) this.campaign.onKill(e);
     this.kills++; this.score += 100 + (head ? 50 : 0) + this.wave * 10;
     this.hud.kill(head, 100 + (head ? 50 : 0) + this.wave * 10, this.player.weapon);
-    if (Math.random() < (this.forceDrop ? 1 : 0.7)) this.pickups.spawn(e.pos.clone());
+    const r = Math.random(); if (this.forceDrop || r < 0.7) this.pickups.spawn(e.pos.clone(), !this.forceDrop && r < 0.1 ? 'medkit' : 'ammo');
   }
   onPlayerDeath() {
     this.hud.resetStreak();
     if (this.mp.active) { this.mp.onLocalDeath(); return; }
-    this.gameOverT = 3.2;
+    this.gameOverT = 3.2; if (this.campaign.cur && !this.campaign.done) this.campaign.finish(false);
   }
   gameOver() {
+    if (this.campaign.cur) { this.missionEnd(); return; }
     this.state = 'gameover'; this.input.fire = this.input.aim = false;
     if (document.pointerLockElement) document.exitPointerLock();
     const p = this.player; const acc = p.shots ? Math.round(p.hits / p.shots * 100) : 0, secs = Math.round(this.time - (this.startT || 0));
-    $('sumTitle').textContent = 'K.I.A.'; $('sumTitle').className = 'red'; $('sumSub').textContent = `WAVE ${this.wave} REACHED · ${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')} SURVIVED`;
+    if (!this.earn.ended) { this.earn.ended = true; const P = prog(); P.matches++; P.kills += this.kills; P.deaths++; P.headshots += p.headshots; P.bestWave = Math.max(P.bestWave, this.wave); P.bestWaveMap = P.bestWaveMap || {}; P.bestWaveMap[this.world.mapId] = Math.max(P.bestWaveMap[this.world.mapId] || 0, this.wave); P.bestScore = Math.max(P.bestScore, this.score); P.bestStreak = Math.max(P.bestStreak, this.hud.bestStreak); saveProg(); }
+    $('sumTitle').textContent = 'K.I.A.'; $('sumTitle').className = 'red'; $('sumSub').textContent = `${MAP_BY_ID[this.world.mapId].name} · WAVE ${this.wave} REACHED · ${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')} SURVIVED`;
     this.summaryCards([['WAVE', this.wave, true], ['KILLS', this.kills], ['HEADSHOTS', p.headshots], ['ACCURACY', acc + '%'], ['BEST STREAK', this.hud.bestStreak], ['SCORE', this.score, true]]);
-    $('sumTable').innerHTML = ''; $('btnRestart').textContent = 'PLAY AGAIN'; $('btnMenu').textContent = 'MAIN MENU';
-    this.showScreen('gameover');
+    $('sumTable').innerHTML = ''; $('sumTable').classList.add('hidden'); $('btnRestart').textContent = 'PLAY AGAIN'; $('btnMenu').textContent = 'MAIN MENU';
+    this.fillAAR(); this.showScreen('gameover');
+  }
+  // campaign mission over: complete / failed screen (same after-action layout as survival)
+  missionEnd() {
+    const C = this.campaign, m = C.cur, r = C.result || { win: false, stars: 0, time: this.time - (C.t0 || 0) };
+    this.state = 'gameover'; this.input.fire = this.input.aim = false; if (document.pointerLockElement) document.exitPointerLock();
+    const p = this.player, acc = p.shots ? Math.round(p.hits / p.shots * 100) : 0, secs = Math.round(r.time);
+    if (!this.earn.ended) { this.earn.ended = true; const P = prog(); P.matches++; P.kills += this.kills; if (!r.win) P.deaths++; else P.wins++; P.headshots += p.headshots; P.bestStreak = Math.max(P.bestStreak, this.hud.bestStreak); saveProg(); }
+    $('sumTitle').textContent = r.win ? 'MISSION COMPLETE' : 'MISSION FAILED'; $('sumTitle').className = r.win ? 'gold' : 'red';
+    $('sumSub').textContent = `${m.name} · ${MAP_BY_ID[m.map].name}` + (r.win ? (r.first ? ' · FIRST CLEAR' : '') : ' · OPERATOR DOWN');
+    const stars = `<span class="stars">${'<i class="on">★</i>'.repeat(r.stars)}${'<i>★</i>'.repeat(3 - r.stars)}</span>`;
+    this.summaryCards([['STARS', stars, true], ['TIME', `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`], ['KILLS', this.kills], ['HEADSHOTS', p.headshots], ['ACCURACY', acc + '%'], ['HEALTH', r.win ? Math.round(p.health) : 0]]);
+    $('sumTable').innerHTML = `<div class="starreq"><span class="${r.stars >= 1 ? 'on' : ''}">★ Complete the mission</span><span class="${r.win && secs <= m.par ? 'on' : ''}">★ Finish within ${(m.par / 60) | 0}:${String(m.par % 60).padStart(2, '0')}</span><span class="${r.win && p.health >= 50 ? 'on' : ''}">★ Finish with 50+ health</span></div>`; $('sumTable').classList.remove('hidden');
+    const n = r.win && C.nextMission(); $('btnRestart').textContent = n ? 'NEXT MISSION' : 'RETRY MISSION'; $('btnMenu').textContent = 'CAMPAIGN';
+    this.fillAAR(); this.showScreen('gameover'); this.sfx.ui(r.win ? 'select' : 'back');
   }
   updateGame(dt) {
     this.time += dt;
@@ -540,21 +630,29 @@ class Game {
     for (const e of this.enemies) if (e.dead && e.deadT > 8) { e.c.dispose(this.scene); e.removed = true; }
     this.enemies = this.enemies.filter(e => !e.removed);
     // waves
-    if (this.mp.active ? this.mp.anyAlive() : !this.player.dead) {
+    const C = this.campaign.cur ? this.campaign : null; if (C) C.update(dt);
+    if ((this.mp.active ? this.mp.anyAlive() : !this.player.dead) && (!C || (C.wavesMode && !C.done))) {
       const alive = this.enemies.filter(e => !e.dead).length;
       if (this.spawned < this.waveTotal) { this.spawnT -= dt; if (this.spawnT <= 0 && alive < this.maxAlive) { this.spawnEnemy(); this.spawnT = 1.6; } }
       else if (alive === 0) {
-        if (this.intermission <= 0) {
-          this.intermission = 6; this.hud.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH', 3); this.mp.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH');
+        if (this.intermission <= 0 && C && C.onWaveCleared()) { this.intermission = 0; if (!this.player.dead) { this.earn.waves++; this.reward(COINS.wave, 150); } }
+        else if (this.intermission <= 0) {
+          this.intermission = 6; this.hud.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH', 3); if (!this.player.dead) { this.earn.waves++; this.reward(COINS.wave, 150); } this.mp.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH');
           const a = this.waveStart || {}, b = this.waveStats(), sh = b.shots - (a.shots || 0);
           this.hud.waveCard({ wave: this.wave, kills: b.kills - (a.kills || 0), hs: b.hs - (a.hs || 0), acc: sh ? Math.round((b.hits - (a.hits || 0)) / sh * 100) : 0, score: b.score - (a.score || 0) });
         }
-        this.intermission -= dt; if (this.intermission <= 0) { this.intermission = 0; this.nextWave(); }
+        if (!C || C.wavesMode) { this.intermission -= dt; if (this.intermission <= 0) { this.intermission = 0; this.nextWave(); } }
       }
     }
     if (this.gameOverT > 0) { this.gameOverT -= dt; if (this.gameOverT <= 0) this.gameOver(); }
   }
+  // v1.5: blend the camera from where it was when climbing into / out of a vehicle
   updateCamera(dt) {
+    this.updateCamera0(dt); const tr = this.player && this.player.vehTrans; if (!tr || !tr.camP || this.state === 'menu') return;
+    const cam = this.camera, k0 = Math.min(1, tr.t / tr.dur), k = k0 * k0 * (3 - 2 * k0);
+    cam.position.lerpVectors(tr.camP, cam.position.clone(), k); cam.quaternion.slerpQuaternions(tr.camQ, cam.quaternion.clone(), k);
+  }
+  updateCamera0(dt) {
     const p = this.player, cam = this.camera;
     if (this.state === 'menu') {
       // slow orbit around the operator; the view is shifted so he stands right of the menu buttons
@@ -569,7 +667,7 @@ class Game {
       const v = p.vehicle, pitch = THREE.MathUtils.clamp(p.pitch, -0.7, 0.35), yaw = p.yaw;
       const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
       const pivot = v.pos.clone(); pivot.y += v.h + 0.15;
-      const back = 5.4 + Math.min(2, Math.abs(v.speed) * 0.08);
+      const back = (this.driveCamFar ? 8.5 : 5.4) + Math.min(2, Math.abs(v.speed) * 0.08);
       const boxes = this.world.boxes.filter(b => b.owner !== v);
       const bh = raycastBoxes(boxes, pivot, dir.clone().negate(), back + 0.3);
       const want = bh ? Math.max(1.2, bh.t - 0.3) : back;
@@ -578,7 +676,7 @@ class Game {
       cam.rotation.set(pitch - 0.12, yaw, 0, 'YXZ');
       if (this.shake > 0) { cam.rotation.x += (Math.random() - 0.5) * this.shake * 0.004; cam.rotation.y += (Math.random() - 0.5) * this.shake * 0.004; this.shake = Math.max(0, this.shake - dt * 6); }
       const fov = this.settings.fov + Math.min(8, Math.abs(v.speed) * 0.4); cam.fov += (fov - cam.fov) * Math.min(1, dt * 4); cam.updateProjectionMatrix();
-      p.c.root.visible = false; this.aimT = 0; return;
+      p.c.root.visible = true; this.aimT = 0; return;
     }
     this.aimT += ((p.aiming && !p.dead ? 1 : 0) - this.aimT) * Math.min(1, dt * 12);
     this.pivotY += (p.eyeHeight - this.pivotY) * Math.min(1, dt * 10);

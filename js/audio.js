@@ -92,9 +92,15 @@ export class Sfx {
       stop: () => { const n = ctx.currentTime; out.gain.setTargetAtTime(0, n, 0.08); o1.stop(n + 0.5); o2.stop(n + 0.5); },
     };
   }
+  horn() { if (!this.ctx) return; const t = this.ctx.currentTime, o = this.out(); this.tone(o, t, 370, 370, 0.45, 0.22, 'sawtooth'); this.tone(o, t, 466, 466, 0.45, 0.16, 'sawtooth'); }
   switchWeapon() { this.click(1500, 0.35); this.click(2600, 0.4, 0.26); this.click(900, 0.35, 0.32); }
   pickup() { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(); this.tone(o, t, 660, 660, 0.08, 0.18, 'triangle'); this.tone(o, t + 0.08, 990, 990, 0.14, 0.18, 'triangle'); this.click(1800, 0.4, 0.02); }
   click(freq = 3000, gain = 0.3, when = 0, pos = null) { if (!this.ctx) return; const o = this.out(pos); this.noiseBurst(o, this.ctx.currentTime + when, { type: 'bandpass', freq, q: 4, gain, decay: 0.035 }); }
+  // medkit: velcro rip, foil tear, then a soft rising chime when the heal completes
+  medkit() { if (!this.ctx) return; const t = this.ctx.currentTime, o = this.out();
+    this.noiseBurst(o, t, { type: 'highpass', freq: 2500, gain: 0.35, attack: 0.01, decay: 0.28 }); this.noiseBurst(o, t + 0.45, { type: 'bandpass', freq: 4200, q: 2, gain: 0.25, decay: 0.12 });
+    this.click(1400, 0.35, 0.9); this.tone(o, t + 1.9, 520, 520, 0.12, 0.12, 'triangle'); this.tone(o, t + 2.02, 780, 780, 0.2, 0.12, 'triangle'); }
+  coins() { if (!this.ctx) return; const t = this.ctx.currentTime, o = this.out(); this.tone(o, t, 1320, 1320, 0.07, 0.12, 'triangle'); this.tone(o, t + 0.07, 1760, 1760, 0.12, 0.12, 'triangle'); }
   empty() { this.click(2600, 0.4); }
   reload(k = 1) { this.click(1800, 0.45, 0.15 * k); this.click(1200, 0.35, 0.22 * k); this.click(2400, 0.5, 1.2 * k); this.click(1500, 0.5, 1.25 * k); this.click(3200, 0.5, 1.75 * k); this.click(2000, 0.6, 1.85 * k); }
   hit(head) { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(); if (head) { this.tone(o, t, 2400, 2300, 0.18, 0.18); this.tone(o, t, 3600, 3500, 0.12, 0.1); } else this.tone(o, t, 1700, 1500, 0.05, 0.14, 'triangle'); }

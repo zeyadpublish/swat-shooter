@@ -7,10 +7,11 @@
 // compact vehicle states in its snapshots; clients only draw them and request to enter / exit.
 import * as THREE from 'three';
 import { Box, groundHeight, resolveCircle } from './physics.js';
+import { icon } from './icons.js';
 
 const SPECS = { // paint: multiplies the model's colour atlas (military olive / desert tan)
-  pickup_armored: { name: 'ARMORED PICKUP', hp: 650, max: 19, acc: 9, rev: 6, grip: 0.62, mass: 1, paint: 0x8f9a6a },
-  truck_armored: { name: 'ARMORED TRUCK', hp: 1000, max: 15, acc: 6.5, rev: 5, grip: 0.5, mass: 1.6, paint: 0xb8a77e },
+  pickup_armored: { name: 'ARMORED PICKUP', hp: 650, max: 19, acc: 9, rev: 6, grip: 0.62, mass: 1, paint: 0x8f9a6a, cab: 0.1, seatY: 0.2 },
+  truck_armored: { name: 'ARMORED TRUCK', hp: 1000, max: 15, acc: 6.5, rev: 5, grip: 0.5, mass: 1.6, paint: 0xb8a77e, cab: 0.45, seatY: 0.3 },
 };
 const UPv = new THREE.Vector3(0, 1, 0);
 const now = () => performance.now() / 1000;
@@ -43,6 +44,9 @@ export class Vehicle {
   fwd() { return new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw)); }
   right() { return new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw)); }
   seat() { return this.pos.clone().add(new THREE.Vector3(0, 0.6, 0)).addScaledVector(this.fwd(), 0.3); }
+  // v1.5: driver's door (outside, on the driver's side) and the seated driver's root position in the cab
+  doorPos() { return this.pos.clone().addScaledVector(this.right(), this.hw + 0.55).addScaledVector(this.fwd(), this.hl * this.spec.cab); }
+  driverSeat() { return this.pos.clone().addScaledVector(this.right(), this.hw * 0.34).addScaledVector(this.fwd(), this.hl * this.spec.cab).add(new THREE.Vector3(0, this.h * this.spec.seatY, 0)); }
   // distance from a point to the body rectangle (0 = inside)
   rectDist(p) {
     const d = new THREE.Vector3(p.x - this.pos.x, 0, p.z - this.pos.z), f = this.fwd(), r = this.right();
@@ -195,18 +199,23 @@ export class Vehicle {
 export class Vehicles {
   constructor(g) {
     this.g = g;
-    this.list = [new Vehicle(g, 0, 'pickup_armored', -3.3, 10, Math.PI), new Vehicle(g, 1, 'truck_armored', 16, -3.3, -Math.PI / 2)];
+    const sp = g.world.vehicleSpawns; this.list = [new Vehicle(g, 0, 'pickup_armored', ...sp[0]), new Vehicle(g, 1, 'truck_armored', ...sp[1])];
     this.engine = null;
   }
   reset() { for (const v of this.list) v.reset(); this.leaveLocal(); }
+  // v1.5 maps: new parking spots; the world was rebuilt so the vehicle colliders are registered again
+  setSpawns(list) {
+    this.list.forEach((v, i) => { const s = list[i] || list[0]; v.home = { x: s[0], z: s[1], yaw: s[2] }; for (const b of v.boxes) if (!this.g.world.boxes.includes(b)) this.g.world.boxes.push(b); });
+    this.reset();
+  }
   // nearest enterable vehicle for the local player
   nearby() {
-    const p = this.g.player; if (p.dead || p.vehicle) return null; let best = null, bd = 2.6;
+    const p = this.g.player; if (p.dead || p.vehicle || p.vehTrans) return null; let best = null, bd = 2.6;
     for (const v of this.list) { if (v.dead || v.driver != null || Math.abs(p.pos.y - v.pos.y) > 1.2) continue; const d = v.rectDist(p.pos); if (d < bd) { bd = d; best = v; } }
     return best;
   }
   use() { // E / touch button
-    const g = this.g, p = g.player, mp = g.mp, mpOn = mp && mp.active;
+    const g = this.g, p = g.player, mp = g.mp, mpOn = mp && mp.active; if (p.vehTrans) return;
     if (p.vehicle) { if (mpOn && !mp.isHost) mp.net.broadcast({ t: 'vx' }); else this.eject(p.vehicle); return; }
     const v = this.nearby(); if (!v) return;
     if (mpOn && !mp.isHost) { mp.net.broadcast({ t: 've', v: v.idx }); return; }
@@ -219,38 +228,79 @@ export class Vehicles {
     return true;
   }
   isMe(who) { const mp = this.g.mp; return who === 'local' || (mp && mp.active && who === mp.myId); }
-  enterLocal(v) {
-    const g = this.g, p = g.player; p.vehicle = v; p.crouchToggle = false; p.aiming = false; p.reloading = 0;
+  enterLocal(v, animate = true) {
+    const g = this.g, p = g.player; p.vehicle = v; p.crouchToggle = false; p.aiming = false; p.reloading = 0; p.healT = 0;
     p.yaw = v.yaw + Math.PI; p.pitch = -0.12; g.camBack = 6;
-    p.c.root.visible = false; document.body.classList.add('driving'); g.sfx.ui('press'); this.startEngine();
-    g.hud.banner && g.hud.toast && g.hud.toast(v.name);
+    document.body.classList.add('driving'); g.sfx.ui('press'); this.startEngine(); g.touch && g.touch.reset();
+    g.hud.toast && g.hud.toast(v.name);
+    const c = p.c; c.ikTarget = 0; c.upperTarget = 0;
+    if (!animate || p.dead) { p.vehTrans = null; this.poseDriver(c, v); return; }
+    // walk to the driver's door, then climb in and turn to face forward (camera blends to the chase view)
+    const from = p.pos.clone(), door = v.doorPos(); door.y = from.y;
+    const a = THREE.MathUtils.clamp(from.distanceTo(door) / 3.2, 0.12, 0.55);
+    p.vehTrans = { dir: 'in', v, t: 0, a, dur: a + 0.6, from, door, camP: g.camera.position.clone(), camQ: g.camera.quaternion.clone() };
   }
-  leaveLocal() {
-    const g = this.g, p = g.player; if (!p.vehicle) return;
-    const v = p.vehicle; p.vehicle = null; document.body.classList.remove('driving'); this.stopEngine();
-    // step out on the left, else the right, else behind
-    const tries = [v.right().multiplyScalar(-(v.hw + 0.8)), v.right().multiplyScalar(v.hw + 0.8), v.fwd().multiplyScalar(-(v.hl + 0.8)), v.fwd().multiplyScalar(v.hl + 0.8)];
+  // the seated driver: crouched pose sitting in the cab, gun stowed, facing forward
+  poseDriver(c, v) {
+    c.root.visible = true; c.root.position.copy(v.driverSeat()); c.yaw = v.yaw + Math.PI; c.aimPitch = 0; c.upperTarget = 0; c.ikTarget = 0;
+    c.play('idle crouching', { fade: 0.25 }); if (c.gun) c.gun.visible = false;
+  }
+  exitSpot(v) {
+    const g = this.g;
+    // step out on the driver's side, else the other side, else behind / in front
+    const tries = [v.right().multiplyScalar(v.hw + 0.8), v.right().multiplyScalar(-(v.hw + 0.8)), v.fwd().multiplyScalar(-(v.hl + 0.8)), v.fwd().multiplyScalar(v.hl + 0.8)];
     const boxes = g.world.boxes.filter(b => b.owner !== v);
     let spot = null;
     for (const o of tries) { const c = v.pos.clone().add(o); c.y = v.pos.y; const c0 = c.clone(); resolveCircle(boxes, c, 0.4, 1.8); if (c.distanceTo(c0) < 0.3) { spot = c; break; } }
     if (!spot) spot = v.pos.clone().add(tries[0]);
     spot.y = groundHeight(g.world.boxes, spot, 0.36, 1.5);
-    p.pos.copy(spot); p.vel.set(0, 0, 0); p.c.root.visible = !p.dead; p.c.root.position.copy(spot);
+    return spot;
+  }
+  leaveLocal(animate = false) {
+    const g = this.g, p = g.player; if (!p.vehicle) { if (p.vehTrans && !animate) this.finishTrans(); return; }
+    const v = p.vehicle; p.vehicle = null; document.body.classList.remove('driving'); this.stopEngine();
+    const spot = this.exitSpot(v);
+    if (animate && !p.dead) { // climb out to the door, then step clear
+      const seat = v.driverSeat(), door = spot.clone();
+      p.vehTrans = { dir: 'out', v, t: 0, a: 0.45, dur: 0.8, from: seat, door, spot, camP: g.camera.position.clone(), camQ: g.camera.quaternion.clone() };
+      p.pos.copy(seat); p.vel.set(0, 0, 0); g.camBack = 0.6; return;
+    }
+    p.vehTrans = null; p.pos.copy(spot); p.vel.set(0, 0, 0); p.c.root.visible = !p.dead; p.c.root.position.copy(spot); this.restoreGun();
+  }
+  restoreGun() { const c = this.g.player.c; if (c.gun) c.gun.visible = true; c.ikTarget = 1; }
+  finishTrans() { const p = this.g.player, tr = p.vehTrans; p.vehTrans = null; if (!tr) return; if (tr.dir === 'in' && p.vehicle) this.poseDriver(p.c, p.vehicle); else { p.pos.copy(tr.spot || tr.door); p.c.root.position.copy(p.pos); this.restoreGun(); p.c.play('idle', { fade: 0.25 }); } }
+  // animated enter / exit step (runs before the player update)
+  transStep(dt) {
+    const g = this.g, p = g.player, tr = p.vehTrans, c = p.c, v = tr.v; tr.t += dt;
+    const face = (d) => { if (d.lengthSq() > 1e-4) return Math.atan2(-d.x, -d.z); return c.yaw; };
+    const lerpAng = (a, b, k) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * k; };
+    const ease = (k) => k * k * (3 - 2 * k), seat = v.driverSeat();
+    if (tr.dir === 'in') {
+      if (tr.t < tr.a) { const k = tr.t / tr.a; p.pos.copy(tr.from).lerp(tr.door, k); c.yaw = lerpAng(c.yaw, face(tr.door.clone().sub(tr.from)), Math.min(1, dt * 14)); c.play('walk forward', { fade: 0.15 }); }
+      else { const k = ease(Math.min(1, (tr.t - tr.a) / (tr.dur - tr.a))); p.pos.copy(tr.door).lerp(seat, k); c.yaw = lerpAng(face(v.right().negate()), v.yaw + Math.PI, Math.min(1, k * 1.6)); c.play('idle crouching', { fade: 0.22 }); if (k > 0.25 && c.gun) c.gun.visible = false; }
+    } else {
+      if (tr.t < tr.a) { const k = ease(tr.t / tr.a); const door = v.doorPos(); door.y = tr.spot.y; p.pos.copy(seat).lerp(door, k); c.yaw = lerpAng(v.yaw + Math.PI, face(v.right()), Math.min(1, k * 1.5)); c.play('idle crouching', { fade: 0.2 }); }
+      else { const k = Math.min(1, (tr.t - tr.a) / (tr.dur - tr.a)); const door = v.doorPos(); door.y = tr.spot.y; p.pos.copy(door).lerp(tr.spot, k); c.play('walk forward', { fade: 0.2 }); if (c.gun) c.gun.visible = true; }
+    }
+    c.root.visible = true; c.root.position.copy(p.pos); p.vel.set(0, 0, 0);
+    if (tr.t >= tr.dur) this.finishTrans();
   }
   eject(v, exploded = false) {
     const who = v.driver; if (who == null) return; v.driver = null; v.input = { th: 0, st: 0, hb: 0 };
-    if (this.isMe(who)) this.leaveLocal();
+    if (this.isMe(who)) this.leaveLocal(!exploded);
   }
   driverInput(inp) { // local keys / joystick -> { th, st, hb }
     const k = inp.keys; let th = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), st = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+    const dv = inp.drive; if (dv && !th && !st) { th = (dv.gas ? 1 : 0) - (dv.brake ? 1 : 0); st = (dv.r ? 1 : 0) - (dv.l ? 1 : 0); }
     const j = inp.joy; if (j && j.active && !th && !st) { const m = Math.hypot(j.x, j.y); if (m > 0.15) { th = THREE.MathUtils.clamp(-j.y * 1.4, -1, 1); st = THREE.MathUtils.clamp(j.x * 1.3, -1, 1); } }
-    return { th, st, hb: k.Space || (this.g.mobile && inp.fire) ? 1 : 0 };
+    return { th, st, hb: k.Space ? 1 : 0 };
   }
   update(dt, inp) {
     const g = this.g, p = g.player, mp = g.mp, mpOn = mp && mp.active, client = mpOn && !mp.isHost;
     if (inp.usePressed) { inp.usePressed = false; if (!p.dead) this.use(); }
     if (p.vehicle && p.dead) this.eject(p.vehicle);
-    if (p.vehicle) { const ip = this.driverInput(inp); this.localInput = ip; if (!client) p.vehicle.input = ip; inp.jumpPressed = false; }
+    if (p.vehTrans && p.dead) this.finishTrans();
+    if (p.vehicle) { const ip = p.vehTrans ? { th: 0, st: 0, hb: 1 } : this.driverInput(inp); this.localInput = ip; if (!client) p.vehicle.input = ip; inp.jumpPressed = false; }
     if (client) for (const v of this.list) v.netSmooth(dt);
     else for (const v of this.list) {
       if (mpOn && v.driver != null && v.driver !== mp.myId) { const dp = mp.players.get(v.driver); if (!dp || dp.dead) this.eject(v); else v.input = dp.vin || { th: 0, st: 0, hb: 0 }; }
@@ -258,12 +308,13 @@ export class Vehicles {
     }
     // the local driver rides along
     if (p.vehicle) {
-      const v = p.vehicle; p.pos.copy(v.seat()); p.vel.copy(v.fwd()).multiplyScalar(v.speed); p.c.root.visible = false;
+      const v = p.vehicle; if (!p.vehTrans) { p.pos.copy(v.seat()); p.vel.copy(v.fwd()).multiplyScalar(v.speed); }
       // camera swings behind the vehicle when driving and the mouse is idle
       if (Math.abs(v.speed) > 2 && g.time - (g.lastLook || -9) > 1.2) { let d = v.yaw + Math.PI - p.yaw; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; p.yaw += d * Math.min(1, dt * 2.2); p.pitch += (-0.16 - p.pitch) * Math.min(1, dt * 2); }
       this.updateEngine(v);
     }
-    document.body.classList.toggle('cannear', !p.vehicle && !!this.nearby());
+    if (p.vehTrans) this.transStep(dt);
+    document.body.classList.toggle('cannear', !p.vehicle && !p.vehTrans && !!this.nearby());
     this.hud();
   }
   hud() {
@@ -271,11 +322,12 @@ export class Vehicles {
     const v = p.vehicle, near = !v && this.nearby();
     if (v) {
       const kmh = Math.round(Math.abs(v.speed) * 3.6), hp = Math.max(0, v.hp / v.spec.hp);
-      if (el._k !== kmh + '|' + Math.round(hp * 100)) { el._k = kmh + '|' + Math.round(hp * 100); el.innerHTML = `<div class="vn">${v.name}${g.mobile ? '' : '<span class="vk">E · EXIT</span>'}</div><div class="vs"><b>${kmh}</b><small>KM/H</small></div><div class="vh"><i style="width:${(hp * 100).toFixed(0)}%" class="${hp < 0.3 ? 'low' : ''}"></i></div>`; }
+      if (el._k !== kmh + '|' + Math.round(hp * 100)) { el._k = kmh + '|' + Math.round(hp * 100); el.innerHTML = `<div class="vn">${v.name}${g.mobile ? '' : '<span class="vk"><kbd>E</kbd> EXIT</span>'}</div><div class="vs"><b>${kmh}</b><small>KM/H</small></div><div class="vh"><i style="width:${(hp * 100).toFixed(0)}%" class="${hp < 0.3 ? 'low' : ''}"></i></div>`; }
     }
     el.classList.toggle('hidden', !v);
-    const txt = v ? '' : near ? (g.mobile ? '' : `E · DRIVE ${near.name}`) : '';
-    if (pr && pr._t !== txt) { pr._t = txt; pr.textContent = txt; pr.classList.toggle('hidden', !txt); }
+    const txt = v || p.vehTrans ? '' : near ? (g.mobile ? '' : `<kbd>E</kbd>${icon('car')}<b>ENTER</b><small>${near.name}</small>`) : '';
+    if (pr && pr._t !== txt) { pr._t = txt; pr.innerHTML = txt; pr.classList.toggle('hidden', !txt); }
+    const lab = v ? 'EXIT' : 'DRIVE'; const tl = document.getElementById('tUseL'); if (tl && tl._t !== lab) { tl._t = lab; tl.textContent = lab; }
   }
   // explosion visuals + sound (everyone)
   boom(c) {
@@ -287,5 +339,5 @@ export class Vehicles {
   stopEngine() { if (this.engine) { try { this.engine.stop(); } catch (e) {} this.engine = null; } }
   updateEngine(v) { if (this.engine) this.engine.set(Math.abs(v.speed) / v.spec.max, v.input ? Math.abs(v.input.th) : 0); }
   netStates() { return this.list.map(v => v.netState()); }
-  applyNet(arr) { arr.forEach((a, i) => this.list[i] && this.list[i].applyNet(a)); const g = this.g, mp = g.mp, me = mp.myId; for (const v of this.list) { if (v.driver === me && g.player.vehicle !== v && !g.player.dead) this.enterLocal(v); if (g.player.vehicle === v && v.driver !== me) this.leaveLocal(); } }
+  applyNet(arr) { arr.forEach((a, i) => this.list[i] && this.list[i].applyNet(a)); const g = this.g, mp = g.mp, me = mp.myId; for (const v of this.list) { if (v.driver === me && g.player.vehicle !== v && !g.player.dead) this.enterLocal(v); if (g.player.vehicle === v && v.driver !== me) this.leaveLocal(true); } }
 }

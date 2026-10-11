@@ -21,7 +21,8 @@ export function buildGun(template, def) {
   inner.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const muzzle = new THREE.Object3D(); muzzle.position.fromArray(def.muzzle); inner.add(muzzle);
   const eject = new THREE.Object3D(); eject.position.fromArray(def.eject); inner.add(eject);
-  return { group: outer, muzzle, eject, mag: (def.magNode && inner.getObjectByName(def.magNode)) || new THREE.Object3D(), def };
+  const fore = new THREE.Object3D(); fore.position.fromArray(def.fore || def.muzzle); inner.add(fore);
+  return { group: outer, muzzle, eject, fore, mag: (def.magNode && inner.getObjectByName(def.magNode)) || new THREE.Object3D(), def };
 }
 
 // Some gun models ship as skinned meshes (rigged for animation). A plain clone() would leave them bound to the
@@ -72,6 +73,8 @@ export class CharacterFactory {
     this.gunLocalQuat = qHand.invert().multiply(qWorld);
     this.gunLocalPos = rh.worldToLocal(grip.clone());
     this.gunScale = 1 / rh.getWorldScale(new THREE.Vector3()).x;
+    // support hand: its orientation relative to the rifle in the aiming pose (reused when IK puts it on any handguard)
+    this.leftHo = qWorld.clone().invert().multiply(lh.getWorldQuaternion(new THREE.Quaternion()));
     this.debug = { fwd: fwd.toArray(), pR: pR.toArray(), pL: pL.toArray() };
   }
   // the upper-body part of a clip (spine, neck, head, arms, hands): layered over locomotion while aiming/firing
@@ -110,6 +113,14 @@ export class Character {
     this.gunQ = factory.gunLocalQuat; this.gunP = factory.gunLocalPos; this.gunS = factory.gunScale; this.gunBone = this.bones.rh;
     if (look) this.skin = new RigSkin(this, factory.rigs[look.rig], look);
     this.guns = {}; this.setGun('m4a1');
+    // left-hand IK chain on the visible skeleton
+    const V = (n) => this.skin ? this.skin.byM['mixamorig' + n] : null;
+    const F = (n) => this.skin ? (V(n) && V(n).qb) : b(n);
+    if (this.skin) { const l = V('LeftHand'); this.ik = { up: V('LeftArm').qb, fore: V('LeftForeArm').qb, hand: l.qb, mid: V('LeftHandMiddle1').qb, off: l.off, lift: 0.015 }; }
+    else this.ik = { up: b('LeftArm'), fore: b('LeftForeArm'), hand: b('LeftHand'), mid: b('LeftHandMiddle1'), off: new THREE.Quaternion(), lift: 0 };
+    // finger joints (joint, child) curled around the handguard
+    this.ik.fingers = ['Index', 'Middle', 'Ring', 'Pinky'].flatMap(f => [[F(`LeftHand${f}1`), F(`LeftHand${f}2`)], [F(`LeftHand${f}2`), F(`LeftHand${f}3`)]]).filter(x => x[0] && x[1]);
+    this.ikW = 0; this.ikTarget = 1;
     this.mixer = new THREE.AnimationMixer(this.model);
     this.actions = {}; this.current = null; this.currentName = '';
     this.aimPitch = 0; this.yaw = 0;
@@ -126,7 +137,7 @@ export class Character {
       g = this.guns[id] = buildGun(this.f.gunScenes[id], this.f.weapons[id]);
       g.group.scale.setScalar(this.gunS);
     }
-    this.gunId = id; this.gun = g.group; this.muzzle = g.muzzle; this.eject = g.eject; this.mag = g.mag; this.mag.visible = true;
+    this.gunId = id; this.gun = g.group; this.muzzle = g.muzzle; this.eject = g.eject; this.fore = g.fore; this.mag = g.mag; this.mag.visible = true;
     this.gun.quaternion.copy(this.gunQ); this.gun.position.copy(this.gunP);
     this.gunBone.add(this.gun); this.gun.updateMatrixWorld(true);
   }
@@ -191,7 +202,45 @@ export class Character {
       this.gun.quaternion.copy(this.gunQ); this.gun.position.copy(this.gunP);
       if (this.kickV > 0.002) { this.gun.rotateX(-this.kickV * 0.09); this.gun.translateZ(-this.kickV * 0.035 * this.gunS); }
     }
-    if (this.skin) this.skin.update();
+    if (this.skin) this.skin.update(); else this.root.updateMatrixWorld(true);
+    // support hand on the handguard (fades out for reloads, deaths, driving)
+    this.ikW += ((dying ? 0 : this.ikTarget) - this.ikW) * Math.min(1, dt * 12);
+    if (this.ikW > 0.01 && this.gun && this.root.visible) this.leftHandIK(this.ikW);
+  }
+  // first-aid kit held in the support hand while healing
+  showMedkit(on) {
+    if (!this.medkit) {
+      const g = new THREE.Group(), red = new THREE.MeshStandardMaterial({ color: 0xb3261e, roughness: 0.6 }), wh = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
+      g.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.12), red));
+      const a = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.062, 0.025), wh), b = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.062, 0.09), wh); g.add(a, b);
+      this.medkit = g;
+    }
+    const hand = this.ik.hand;
+    if (on) { hand.add(this.medkit); const s = 1 / hand.getWorldScale(new THREE.Vector3()).x; this.medkit.scale.setScalar(s); this.medkit.position.copy(this.ik.mid.position).multiplyScalar(0.8); }
+    else if (this.medkit.parent) this.medkit.parent.remove(this.medkit);
+  }
+  leftHandIK(w) {
+    const k = this.ik, gq = this.gun.getWorldQuaternion(_qa);
+    const hq = _qb.copy(gq).multiply(this.f.leftHo).multiply(k.off); // wanted hand rotation
+    // wrist target: the grip point minus the wrist->palm vector at the wanted rotation
+    const hw = k.hand.getWorldPosition(new THREE.Vector3()), palm = k.mid.getWorldPosition(new THREE.Vector3()).sub(hw);
+    const cur = k.hand.getWorldQuaternion(new THREE.Quaternion());
+    palm.applyQuaternion(cur.clone().invert()).applyQuaternion(hq).multiplyScalar(0.75);
+    const gUp = new THREE.Vector3(0, 1, 0).applyQuaternion(gq), fp = this.fore.getWorldPosition(new THREE.Vector3()).addScaledVector(gUp, k.lift);
+    const t = fp.clone().sub(palm);
+    if (w < 0.999) t.lerp(hw, 1 - w);
+    // pole: elbow down and slightly out to the character's left
+    const pole = new THREE.Vector3(-0.6, -1, 0).applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.yaw).normalize();
+    solveTwoBone(k.up, k.fore, k.hand, t, pole);
+    setWorldQuat(k.hand, cur.slerp(hq, w));
+    // wrap the fingers toward the barrel axis
+    const A = fp.addScaledVector(gUp, 0.04), jp = new THREE.Vector3(), cp = new THREE.Vector3(), ax = new THREE.Vector3(), q = new THREE.Quaternion();
+    for (const [j, ch] of k.fingers) {
+      j.getWorldPosition(jp); ch.getWorldPosition(cp); const d = cp.sub(jp).normalize(), to = A.clone().sub(jp).normalize();
+      ax.crossVectors(d, to); const l = ax.length(); if (l < 1e-4) continue; ax.divideScalar(l);
+      const ang = Math.min(Math.acos(THREE.MathUtils.clamp(d.dot(to), -1, 1)) * 0.7, 0.85) * w;
+      j.getWorldQuaternion(q); setWorldQuat(j, q.premultiply(new THREE.Quaternion().setFromAxisAngle(ax, ang)));
+    }
   }
   upperAction(name) {
     if (this.upperActName !== name && this.upperAct) { this.upperAct.stop(); this.upperAct = null; }
@@ -214,42 +263,58 @@ export class Character {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Extra soldiers: Quaternius CC0 characters (their "CharacterArmature" rig) driven by the SWAT model's Mixamo
-// skeleton. The SWAT skeleton keeps running every clip (49 Mixamo animations, aim pitch, hitboxes, gun mount);
-// its mesh is hidden and each frame the visible character's bones copy the Mixamo bones' world rotations
-// through a per-bone offset measured once in a shared reference pose (bones pointing the same way).
-const MAP = { Hips: 'Hips', Spine: 'Abdomen', Spine1: 'Torso', Spine2: 'Chest', Neck: 'Neck', Head: 'Head' };
+// Extra soldiers: realistic Microsoft Rocketbox avatars (MIT, 3ds Max Biped rig "Bip01 ...") driven by the SWAT
+// model's Mixamo skeleton. The SWAT skeleton keeps running every clip (49 Mixamo animations, aim pitch, hitboxes);
+// its mesh is hidden and each frame the visible body's bones copy the Mixamo bones' world rotations through a
+// per-bone offset measured once in the shared T-pose. The body is scaled so its hips sit at the SWAT hip height
+// (same leg length = no foot sliding), and the left hand is put on the gun's handguard by two-bone IK.
+const MAP = { Hips: 'Bip01_Pelvis', Spine: 'Bip01_Spine', Spine1: 'Bip01_Spine1', Spine2: 'Bip01_Spine2', Neck: 'Bip01_Neck', Head: 'Bip01_Head' };
 for (const [m, q] of [['Left', 'L'], ['Right', 'R']]) {
-  // (three.js strips the '.' from node names: "UpperArm.L" loads as "UpperArmL")
-  Object.assign(MAP, { [m + 'Shoulder']: 'Shoulder' + q, [m + 'Arm']: 'UpperArm' + q, [m + 'ForeArm']: 'LowerArm' + q, [m + 'Hand']: 'Wrist' + q,
-    [m + 'UpLeg']: 'UpperLeg' + q, [m + 'Leg']: 'LowerLeg' + q, [m + 'Foot']: 'Foot' + q });
-  for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) for (let i = 1; i <= 3; i++) MAP[`${m}Hand${f}${i}`] = `${f}${i}${q}`;
-  for (let i = 1; i <= 3; i++) MAP[`${m}HandThumb${i}`] = `Thumb${i}${q}`;
+  Object.assign(MAP, { [m + 'Shoulder']: `Bip01_${q}_Clavicle`, [m + 'Arm']: `Bip01_${q}_UpperArm`, [m + 'ForeArm']: `Bip01_${q}_Forearm`, [m + 'Hand']: `Bip01_${q}_Hand`,
+    [m + 'UpLeg']: `Bip01_${q}_Thigh`, [m + 'Leg']: `Bip01_${q}_Calf`, [m + 'Foot']: `Bip01_${q}_Foot`, [m + 'ToeBase']: `Bip01_${q}_Toe0` });
+  ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'].forEach((f, k) => { for (let i = 1; i <= 3; i++) MAP[`${m}Hand${f}${i}`] = `Bip01_${q}_Finger${k}${i === 1 ? '' : i - 1}`; });
 }
-// bone -> the child used to measure its direction (Mixamo name, Quaternius name)
+// bone -> the child used to measure its direction
 const AIM = [['Spine', 'Spine1'], ['Spine1', 'Spine2'], ['Spine2', 'Neck'], ['Neck', 'Head']];
-for (const m of ['Left', 'Right']) AIM.push([m + 'Shoulder', m + 'Arm'], [m + 'Arm', m + 'ForeArm'], [m + 'ForeArm', m + 'Hand'], [m + 'Hand', m + 'HandMiddle1'], [m + 'UpLeg', m + 'Leg'], [m + 'Leg', m + 'Foot'],
-  ...['Index', 'Middle', 'Ring', 'Pinky'].flatMap(f => [[`${m}Hand${f}1`, `${m}Hand${f}2`], [`${m}Hand${f}2`, `${m}Hand${f}3`]]), [m + 'HandThumb1', m + 'HandThumb2'], [m + 'HandThumb2', m + 'HandThumb3']);
+for (const m of ['Left', 'Right']) AIM.push([m + 'Shoulder', m + 'Arm'], [m + 'Arm', m + 'ForeArm'], [m + 'ForeArm', m + 'Hand'], [m + 'Hand', m + 'HandMiddle1'], [m + 'UpLeg', m + 'Leg'], [m + 'Leg', m + 'Foot'], [m + 'Foot', m + 'ToeBase'],
+  ...['Index', 'Middle', 'Ring', 'Pinky', 'Thumb'].flatMap(f => [[`${m}Hand${f}1`, `${m}Hand${f}2`], [`${m}Hand${f}2`, `${m}Hand${f}3`]]));
 
-// Looks: which body and colours. Palettes recolour the flat-shaded Quaternius materials by name.
+// Rigs (asset files assets/chars/<rig>.glb) and looks. Palettes multiply a material colour (by material suffix: body / helmet / equipment / head).
+export const RIGS = ['rb_police2', 'rb_mil1', 'rb_mil2', 'rb_mil3', 'rb_mil4', 'rb_mil5', 'rb_milf1', 'rb_civ4', 'rb_civ5', 'rb_civ11', 'rb_civ18'];
+const DESERT = { body: 0xd8c39a, helmet: 0xd8c39a, equipment: 0xc9b48c };
 export const LOOKS = {
   swat: { name: 'SWAT', rig: null },
   swat_blue: { name: 'Blue SWAT', rig: null, tint: 0x4d6fae },
-  op_black: { name: 'Tactical', rig: 'q_swat', palette: {} },
-  op_blue: { name: 'Blue operator', rig: 'q_swat', palette: { Swat: 0x1f3a66, Swat_Black: 0x0e1626, Visor: 0x6fb4ff } },
-  op_red: { name: 'Red operator', rig: 'q_swat', palette: { Swat: 0x5a1c16, Swat_Black: 0x1e0d0b, Visor: 0xff6a4a } },
-  mil_olive: { name: 'Militia', rig: 'q_adv', palette: { Green: 0x3b4526, LightGreen: 0x55603a, Brown: 0x4a3c26, Brown2: 0x2d2418, Gold: 0x3a3a30 } },
-  mil_desert: { name: 'Desert militia', rig: 'q_adv', palette: { Green: 0x8a7552, LightGreen: 0xa08a64, Brown: 0x6b5638, Brown2: 0x3d3122, Gold: 0x55493a } },
-  mil_red: { name: 'Red militia', rig: 'q_adv', palette: { Green: 0x6e2a22, LightGreen: 0x8e3a2e, Brown: 0x3a2a20, Brown2: 0x251a14, Gold: 0x9e2c22 } },
-  gunner: { name: 'Gunner', rig: 'q_worker', palette: { Worker_Yellow: 0x4d5338, Worker_Vest: 0x2e3324, LightBrown: 0x5a5444, Brown: 0x3a3226, Moustache: 0x1c140c } },
-  gunner_red: { name: 'Red gunner', rig: 'q_worker', palette: { Worker_Yellow: 0x5c2620, Worker_Vest: 0x8a2a20, LightBrown: 0x4a3a30, Brown: 0x30241c } },
-  insurgent: { name: 'Insurgent', rig: 'q_hoodie', palette: { Purple: 0x2c2f24, White: 0x55524a, LightBlue: 0x23262a } },
-  raider: { name: 'Raider', rig: 'q_punk', palette: { Red: 0x3a3226, Red_Dark: 0x2a2620, White: 0x5d5a50, LightBlue: 0x262a2e } },
-  scout: { name: 'Scout', rig: 'q_casual', palette: { White: 0x5f6250, Red_Dark: 0x3d3a2c, LightBlue: 0x2b2e26, LightBrown: 0x4a4436 } },
+  breacher: { name: 'Breacher', rig: 'rb_police2' },
+  breacher_blue: { name: 'Breacher', rig: 'rb_police2', palette: { body: 0x8fb0ff, equipment: 0x9ab8ff } },
+  ranger: { name: 'Ranger', rig: 'rb_mil1' },
+  recon: { name: 'Recon', rig: 'rb_mil2' },
+  warden: { name: 'Warden', rig: 'rb_mil3' },
+  sentinel: { name: 'Sentinel', rig: 'rb_mil4' },
+  sergeant: { name: 'Sergeant', rig: 'rb_mil5' },
+  viper: { name: 'Viper', rig: 'rb_milf1' },
+  merc: { name: 'Mercenary', rig: 'rb_mil2', palette: DESERT },
+  merc2: { name: 'Mercenary', rig: 'rb_mil5', palette: DESERT },
+  merc3: { name: 'Contractor', rig: 'rb_mil3', palette: { body: 0x9a8a70, helmet: 0x6a6252, equipment: 0x7a6a52 } },
+  thug: { name: 'Gunman', rig: 'rb_civ4' },
+  militia: { name: 'Militia', rig: 'rb_civ5' },
+  raider: { name: 'Raider', rig: 'rb_civ11' },
+  hood: { name: 'Hooded gunman', rig: 'rb_civ18' },
 };
-export const ENEMY_LOOKS = ['mil_olive', 'mil_desert', 'gunner', 'insurgent', 'raider', 'scout', null];
-export const TEAM_LOOKS = [['op_blue', 'swat_blue'], ['mil_red', 'gunner_red', 'op_red']];
-export const FFA_LOOKS = ['swat', 'op_black', 'mil_olive', 'gunner', 'insurgent', 'mil_desert', 'raider', 'scout', 'op_blue', 'op_red'];
+// Operators the player can pick (price in coins; 0 = unlocked from the start)
+export const OPERATORS = [
+  { id: 'swat', name: 'SWAT', role: 'Assaulter', price: 0, blurb: 'City tactical unit. Balanced and battle-tested.' },
+  { id: 'breacher', name: 'Breacher', role: 'Entry specialist', price: 0, blurb: 'Black kit, balaclava and plate carrier. First through the door.' },
+  { id: 'ranger', name: 'Ranger', role: 'Rifleman', price: 600, blurb: 'Army rifleman in digital camo with goggles and full kit.' },
+  { id: 'viper', name: 'Viper', role: 'Marksman', price: 900, blurb: 'Patrol leader with helmet and chest rig.' },
+  { id: 'sentinel', name: 'Sentinel', role: 'Support', price: 1200, blurb: 'Heavy load-bearing vest, knee pads and ballistic helmet.' },
+  { id: 'warden', name: 'Warden', role: 'Pointman', price: 1600, blurb: 'Helmet, shooting glasses and sidearm on the vest.' },
+  { id: 'recon', name: 'Recon', role: 'Scout', price: 2000, blurb: 'Light patrol cap kit. Travels fast and quiet.' },
+  { id: 'sergeant', name: 'Sergeant', role: 'Squad leader', price: 2500, blurb: 'Veteran NCO in patrol cap and field uniform.' },
+];
+export const ENEMY_LOOKS = ['thug', 'militia', 'merc', 'raider', 'hood', 'merc2', 'merc3'];
+export const TEAM_LOOKS = [['breacher_blue', 'swat_blue'], ['militia', 'merc', 'thug', 'merc2', 'hood']];
+export const FFA_LOOKS = ['swat', 'breacher', 'ranger', 'militia', 'merc', 'viper', 'thug', 'sentinel', 'raider', 'warden', 'hood', 'recon'];
 export const enemyLook = (nid) => ENEMY_LOOKS[((nid || 0) * 5 + 3) % ENEMY_LOOKS.length];
 
 const _m4 = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
@@ -257,10 +322,8 @@ function worldQ(o, out) { o.matrixWorld.decompose(_p, out, _s); return out; }
 
 function prepareRig(gltf, factory) {
   const tpl = gltf.scene; tpl.updateMatrixWorld(true);
-  // the Quaternius rig drives the feet by IK from the root; hang them under the shins so they follow the legs
-  for (const q of ['L', 'R']) { const foot = tpl.getObjectByName('Foot' + q), shin = tpl.getObjectByName('LowerLeg' + q); if (foot && shin && foot.parent !== shin) shin.attach(foot); }
-  tpl.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; }  });
-  // reference poses: SWAT in its bind pose, the Quaternius model in its bind pose, both facing -Z like a Character
+  tpl.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+  // reference poses: SWAT in its bind pose, the avatar in its bind pose, both facing -Z like a Character
   const mRoot = new THREE.Group(), mModel = SkeletonUtils.clone(factory.template); mModel.scale.setScalar(0.01); mModel.rotation.y = Math.PI; mRoot.add(mModel);
   mRoot.updateMatrixWorld(true); // node rest transforms = bind poses (T-poses)
   const qRoot = new THREE.Group(), qModel = SkeletonUtils.clone(tpl); qModel.rotation.y = Math.PI; qRoot.add(qModel);
@@ -269,8 +332,9 @@ function prepareRig(gltf, factory) {
   const wp = (o) => o.getWorldPosition(new THREE.Vector3());
   // same facing? (the character's left arm on the same side)
   if (Math.sign(wp(M('LeftArm')).x) !== Math.sign(wp(Q('LeftArm')).x)) { qModel.rotation.y += Math.PI; qRoot.updateMatrixWorld(true); }
-  const height = { m: wp(M('Hips')).y, q: wp(Q('Hips')).y };
-  // align each Quaternius bone so it points where the matching SWAT bone points (parents first)
+  // uniform scale: hips at the SWAT hip height -> identical leg length, so the in-place clips' foot plants match the move speed
+  const scale = wp(M('Hips')).y / wp(Q('Hips')).y; qModel.scale.setScalar(scale); qRoot.updateMatrixWorld(true);
+  // align each avatar bone so it points where the matching SWAT bone points (parents first)
   for (const [a, b] of AIM) {
     const qa = Q(a), qb = Q(b), ma = M(a), mb = M(b); if (!qa || !qb || !ma || !mb) continue;
     const dq = wp(qb).sub(wp(qa)).normalize(), dm = wp(mb).sub(wp(ma)).normalize();
@@ -287,38 +351,39 @@ function prepareRig(gltf, factory) {
   }
   // order the driven bones parents-first
   const order = []; qModel.traverse(o => { const e = map.find(x => x.q === o.name); if (e) order.push(e); });
-  // gun mount on the Quaternius right wrist, same grip relative to the hand
+  // gun mount on the avatar's right hand, same grip relative to the hand
   const mh = M('RightHand'), qh = Q('RightHand');
   const offH = order.find(e => e.q === qh.name).off;
   const gunQ = offH.clone().invert().multiply(factory.gunLocalQuat);
   const mhS = mh.getWorldScale(new THREE.Vector3()).x, qhS = qh.getWorldScale(new THREE.Vector3()).x;
   const pw = factory.gunLocalPos.clone().multiplyScalar(mhS).applyQuaternion(mh.getWorldQuaternion(new THREE.Quaternion()));
   const gunP = pw.applyQuaternion(qh.getWorldQuaternion(new THREE.Quaternion()).invert()).divideScalar(qhS);
-  return { tpl, order, yaw: qModel.rotation.y, hipRatio: height.q / height.m, gunQ, gunP, gunS: 1 / qhS, hand: qh.name };
+  const hips = Q('Hips');
+  return { tpl, order, yaw: qModel.rotation.y, scale, gunQ, gunP, gunS: 1 / qhS, hand: qh.name, hips: hips.name };
 }
 
 class RigSkin {
   constructor(ch, rig, look) {
     this.ch = ch; this.rig = rig;
     ch.model.traverse(o => { if (o.isMesh) o.visible = false; }); // the SWAT skeleton keeps animating, invisibly
-    const m = this.model = SkeletonUtils.clone(rig.tpl); m.rotation.y = rig.yaw; ch.root.add(m);
+    const m = this.model = SkeletonUtils.clone(rig.tpl); m.rotation.y = rig.yaw; m.scale.setScalar(rig.scale); ch.root.add(m);
     const pal = look.palette || {};
     m.traverse(o => { if (o.isMesh) {
-      const fix = (mat) => { const n = mat.clone(); n.roughness = 0.82; n.metalness = 0; n.envMapIntensity = 0.8; if (pal[mat.name] != null) n.color = new THREE.Color(pal[mat.name]); return n; };
+      const fix = (mat) => { const n = mat.clone(); n.roughness = 0.8; n.metalness = 0; n.envMapIntensity = 0.85; const k = mat.name.replace(/^[a-z]+\d+_/, ''); if (pal[k] != null) n.color = new THREE.Color(pal[k]); return n; };
       o.material = Array.isArray(o.material) ? o.material.map(fix) : fix(o.material);
     } });
-    this.links = rig.order.map(e => ({ mb: ch.model.getObjectByName(e.m), qb: m.getObjectByName(e.q), off: e.off }));
-    this.hips = m.getObjectByName('Hips'); this.mHips = ch.model.getObjectByName('mixamorigHips');
-    // mount guns on this body's wrist instead of the hidden SWAT hand
+    this.links = rig.order.map(e => ({ m: e.m, mb: ch.model.getObjectByName(e.m), qb: m.getObjectByName(e.q), off: e.off }));
+    this.byM = {}; for (const L of this.links) this.byM[L.m] = L;
+    this.hips = m.getObjectByName(rig.hips); this.mHips = ch.model.getObjectByName('mixamorigHips');
+    // mount guns on this body's hand instead of the hidden SWAT hand
     ch.gunBone = m.getObjectByName(rig.hand); ch.gunQ = rig.gunQ; ch.gunP = rig.gunP; ch.gunS = rig.gunS;
     this.wq = new THREE.Quaternion(); this.pq = new THREE.Quaternion();
   }
   update() {
     const m = this.model; m.updateMatrixWorld(true);
-    // hips: follow the SWAT hips, scaled to this body's leg length
-    const root = this.ch.root; root.matrixWorld.decompose(_p, _qa, _s);
-    const hp = this.mHips.getWorldPosition(new THREE.Vector3()); const rel = hp.sub(_p).multiplyScalar(this.rig.hipRatio).add(_p);
-    this.hips.parent.updateWorldMatrix(true, false); this.hips.position.copy(this.hips.parent.worldToLocal(rel));
+    // hips follow the SWAT hips (same hip height after scaling)
+    const hp = this.mHips.getWorldPosition(new THREE.Vector3());
+    this.hips.parent.updateWorldMatrix(true, false); this.hips.position.copy(this.hips.parent.worldToLocal(hp));
     for (const L of this.links) {
       worldQ(L.mb, this.wq).multiply(L.off);
       L.qb.parent.updateWorldMatrix(false, false); worldQ(L.qb.parent, this.pq);
@@ -328,4 +393,30 @@ class RigSkin {
     m.updateMatrixWorld(true);
   }
   dispose() { this.model.traverse(o => { if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach(x => x.dispose()); }); }
+}
+
+// ---- two-bone IK helpers (world space)
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _t = new THREE.Vector3(), _n = new THREE.Vector3(), _u = new THREE.Vector3(), _w = new THREE.Vector3();
+const _qq = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _qw = new THREE.Quaternion();
+export function setWorldQuat(bone, q) { bone.parent.getWorldQuaternion(_qp); bone.quaternion.copy(_qp.invert().multiply(q)); bone.updateMatrixWorld(true); }
+function rotateWorld(bone, q) { bone.getWorldQuaternion(_qw); setWorldQuat(bone, _qw.premultiply(q)); }
+// bend upper/fore so the hand reaches target (elbow stays in its animated bend plane, swung toward the pole)
+export function solveTwoBone(up, fore, hand, target, pole) {
+  up.getWorldPosition(_a); fore.getWorldPosition(_b); hand.getWorldPosition(_c);
+  const lab = _a.distanceTo(_b), lbc = _b.distanceTo(_c), lat = THREE.MathUtils.clamp(_a.distanceTo(target), 0.05, lab + lbc - 0.002);
+  // 1) elbow angle
+  _u.subVectors(_a, _b).normalize(); _w.subVectors(_c, _b).normalize();
+  _n.crossVectors(_u, _w); if (_n.lengthSq() < 1e-8) _n.copy(pole).cross(_u); _n.normalize();
+  const cur = Math.acos(THREE.MathUtils.clamp(_u.dot(_w), -1, 1));
+  const want = Math.acos(THREE.MathUtils.clamp((lab * lab + lbc * lbc - lat * lat) / (2 * lab * lbc), -1, 1));
+  rotateWorld(fore, _qq.setFromAxisAngle(_n, want - cur));
+  // 2) swing the whole arm onto the target
+  hand.getWorldPosition(_c);
+  rotateWorld(up, _qq.setFromUnitVectors(_u.subVectors(_c, _a).normalize(), _w.subVectors(target, _a).normalize()));
+  // 3) twist around the shoulder->target axis so the elbow points toward the pole (down/out)
+  if (pole) {
+    fore.getWorldPosition(_b); const ax = _t.subVectors(target, _a).normalize();
+    const e = _u.subVectors(_b, _a); e.addScaledVector(ax, -e.dot(ax)); const p = _w.copy(pole); p.addScaledVector(ax, -p.dot(ax));
+    if (e.lengthSq() > 1e-6 && p.lengthSq() > 1e-6) { e.normalize(); p.normalize(); let ang = Math.acos(THREE.MathUtils.clamp(e.dot(p), -1, 1)); if (_n.crossVectors(e, p).dot(ax) < 0) ang = -ang; rotateWorld(up, _qq.setFromAxisAngle(ax, ang * 0.6)); }
+  }
 }
