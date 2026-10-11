@@ -14,10 +14,11 @@ import { FX } from './fx.js';
 import { Sfx } from './audio.js';
 import { Player, fwdVec, rightVec } from './player.js';
 import { Enemy } from './enemy.js';
-import { TouchControls, isTouchDevice, goFullscreenLandscape } from './touch.js';
+import { TouchControls, isTouchDevice, goFullscreenLandscape, isIOS, isStandalone, fullscreenSupported, isFullscreen } from './touch.js';
 import { ICONS, icon } from './icons.js';
 import { WEAPONS, WEAPON_BY_ID } from './weapons.js';
 import { Pickups } from './pickups.js';
+import { asset, MOBILE_ASSETS } from './assets.js';
 
 const $ = (id) => document.getElementById(id);
 const QUALITY = {
@@ -194,9 +195,9 @@ class Game {
     mgr.onProgress = (url, a, b) => { $('loadfill').style.width = (a / b * 100) + '%'; $('loadtxt').textContent = `Loading ${a} / ${b}`; };
     this.world = new World(this.scene, this.renderer, mgr);
     const glLoader = new GLTFLoader(mgr); glLoader.setMeshoptDecoder(MeshoptDecoder);
-    const gltfP = glLoader.loadAsync('assets/swat.glb', (e) => { if (e.total) $('loadtxt').textContent = `Loading operator model ${(e.loaded / e.total * 100) | 0}%`; });
-    const gunP = Promise.all(WEAPONS.map(w => glLoader.loadAsync(w.file)));
-    const hdrP = new RGBELoader(mgr).loadAsync('assets/hdr/kloofendal_48d_partly_cloudy_puresky.hdr');
+    const gltfP = glLoader.loadAsync(asset('assets/swat.glb'), (e) => { if (e.total) $('loadtxt').textContent = `Loading operator model ${(e.loaded / e.total * 100) | 0}%`; });
+    const gunP = Promise.all(WEAPONS.map(w => glLoader.loadAsync(asset(w.file))));
+    const hdrP = new RGBELoader(mgr).loadAsync(asset('assets/hdr/kloofendal_48d_partly_cloudy_puresky.hdr'));
     const cityLoader = new GLTFLoader(mgr); cityLoader.setMeshoptDecoder(MeshoptDecoder);
     await this.world.loadCity(cityLoader);
     this.world.build({ lite: this.lite });
@@ -225,7 +226,9 @@ class Game {
     this.setupPost(); this.applySettings();
     this.bindUI(); this.bindInput();
     if (MOBILE) this.touch = new TouchControls(this);
-    addEventListener('resize', () => this.resize());
+    addEventListener('resize', () => this.relayout());
+    if (window.visualViewport) visualViewport.addEventListener('resize', () => this.relayout());
+    addEventListener('orientationchange', () => { this.relayout(); setTimeout(() => this.relayout(), 350); });
     // warm up shaders
     this.renderer.compile(this.scene, this.camera);
     $('loading').classList.add('hidden'); this.showScreen('menu'); this.state = 'menu';
@@ -260,6 +263,8 @@ class Game {
     this.sfx.setVolume(s.vol);
     this.resize();
   }
+  // mobile browsers: address bar showing/hiding, rotation, entering/leaving fullscreen
+  relayout() { this.resize(); if (this.touch) this.touch.layout(); }
   resize() {
     const w = innerWidth, h = innerHeight, pr = this.pixelRatio();
     this.renderer.setPixelRatio(pr); this.renderer.setSize(w, h, false);
@@ -459,6 +464,28 @@ class Game {
 const APP = typeof window.Neutralino !== 'undefined';
 if (APP) { try { Neutralino.init(); Neutralino.events.on('windowClose', () => Neutralino.app.exit()); } catch (e) {} if (!localStorage.getItem('swat-settings')) localStorage.setItem('swat-settings', JSON.stringify({ quality: 'medium' })); }
 const game = window.__game = new Game();
+// ---- phones in a browser: tap-to-play splash (fullscreen needs a user gesture), PWA install, service worker
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+if (MOBILE && !NATIVE && !APP) {
+  const splash = $('tapsplash'); let started = false;
+  const iosNoFs = isIOS() && !fullscreenSupported() && !isStandalone();
+  if (iosNoFs && !localStorage.getItem('swat-ios-hint')) { $('ioshint').classList.remove('hidden'); localStorage.setItem('swat-ios-hint', '1'); }
+  if (params.get('nosplash') !== '1') splash.classList.remove('hidden'); else started = true;
+  const first = (e) => {
+    if (started) return; started = true; e.preventDefault();
+    window.__fsRequested = (window.__fsRequested || 0) + 1;
+    goFullscreenLandscape(); game.sfx.init();
+    splash.classList.add('hidden'); setTimeout(() => game.relayout && game.state !== 'loading' && game.relayout(), 400);
+  };
+  splash.addEventListener('touchend', first, { passive: false }); splash.addEventListener('click', first);
+  // the user left fullscreen (back gesture / swipe): any later tap asks again
+  document.addEventListener('touchend', () => {
+    if (!started || isFullscreen() || isStandalone() || !fullscreenSupported()) return;
+    window.__fsRequested = (window.__fsRequested || 0) + 1; goFullscreenLandscape();
+  }, { capture: true, passive: true });
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+  if ('serviceWorker' in navigator && params.get('nosw') !== '1') addEventListener('load', () => navigator.serviceWorker.register('sw.js').then(r => { window.__sw = r.scope; }).catch(e => { window.__swErr = String(e); }));
+}
 if (APP) {
   document.querySelectorAll('.appexit').forEach(b => { b.classList.remove('hidden'); b.onclick = () => { try { Neutralino.app.exit(); } catch (e) { window.close(); } }; });
   addEventListener('keydown', async (e) => { if (e.code === 'F11') { e.preventDefault(); try { (await Neutralino.window.isFullScreen()) ? Neutralino.window.exitFullScreen() : Neutralino.window.setFullScreen(); } catch (err) {} } });

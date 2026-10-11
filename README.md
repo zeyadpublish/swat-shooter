@@ -30,6 +30,8 @@ The game is served inside the app from `https://localhost`. The app uses a light
 ## Hosting on GitHub Pages
 This folder can be published as-is (all paths are relative; `.nojekyll` is included).
 
+Phones and tablets opening the site load the light asset set in `assets-mobile/` (about 14 MB; desktop loads about 29 MB from `assets/`) and the Mobile quality preset. A TAP TO PLAY screen appears, and the first tap enters fullscreen, locks landscape and turns on sound. Leaving fullscreen and tapping again re-enters it. The site is an installable app (`manifest.webmanifest`, `sw.js`), and the service worker caches the phone assets so reloads are fast. On iPhone, Safari can't make a web page fullscreen, so a one-time hint suggests Share → Add to Home Screen, which opens the game fullscreen. Force a mode with `?mobile=1` / `?mobile=0` or `?assets=mobile` / `?assets=desktop`.
+
 ## Controls
 | Key | Action |
 |---|---|

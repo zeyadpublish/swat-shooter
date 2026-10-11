@@ -4,8 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SWAT Siege">
+<meta name="format-detection" content="telephone=no">
 <meta name="theme-color" content="#0b0d10">
-<link rel="icon" href="data:,">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="assets/ui/icon-192.png">
+<link rel="apple-touch-icon" href="assets/ui/apple-touch-icon.png">
 <title>SWAT: Urban Siege</title>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">{"imports":{"three":"./libs/three/three.module.js","three/addons/":"./libs/three/addons/"}}</script>
@@ -62,6 +68,12 @@
     <button id="tPause" class="tb small" data-icon="gear" aria-label="Pause / settings"></button>
     <button id="tSwap" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
   </div>
+</div>
+<div id="tapsplash" class="hidden">
+  <div class="title">SWAT<span>URBAN SIEGE</span></div>
+  <div class="tap">TAP TO PLAY</div>
+  <div id="ioshint" class="hidden">For true fullscreen on iPhone: tap <b>Share</b> &rarr; <b>Add to Home Screen</b>, then open SWAT Siege from your home screen.</div>
+  <div class="sub">Best in landscape &middot; headphones recommended</div>
 </div>
 <div id="rotate"><div>&#8635;</div>Rotate your device to landscape</div>
 

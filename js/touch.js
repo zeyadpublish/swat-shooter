@@ -6,8 +6,15 @@ export function isTouchDevice() {
   if (p.get('mobile') === '1') return true;
   if (p.get('mobile') === '0') return false;
   if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return true; // Android app
-  return (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && matchMedia('(pointer: coarse)').matches;
+  const touch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  const uaMobile = /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(navigator.userAgent) || isIOS();
+  return touch && (matchMedia('(pointer: coarse)').matches || uaMobile);
 }
+// iPhone / iPad (iPadOS reports itself as a Mac with touch)
+export function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+export function isStandalone() { return matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
+export function fullscreenSupported() { const d = document.documentElement; return !!(d.requestFullscreen || d.webkitRequestFullscreen); }
+export function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
 
 export class TouchControls {
   constructor(game) {
@@ -16,6 +23,7 @@ export class TouchControls {
     this.joyId = null; this.lookIds = new Map(); this.fireIds = new Set();
     this.root = $('touch'); this.base = $('joybase'); this.knob = $('joyknob');
     document.body.classList.add('mobile');
+    this.ts = 1; this.layout();
     this.applySettings();
     this.bind();
   }
@@ -24,7 +32,15 @@ export class TouchControls {
     document.body.classList.toggle('lefthand', s.hand === 'left');
     this.root.style.setProperty('--op', s.btnOp ?? 0.85);
   }
-  get R() { return 56; }
+  get R() { return 56 * this.ts; }
+  // scale controls with the viewport (reference: 915x412 phone landscape) and keep the HUD proportional
+  layout() {
+    const vv = window.visualViewport, w = vv ? vv.width : innerWidth, h = vv ? vv.height : innerHeight;
+    const k = Math.min(w / 915, h / 412);
+    this.ts = Math.max(0.8, Math.min(1.3, k));
+    const hud = document.getElementById('hud'); hud.style.setProperty('--ts', this.ts.toFixed(3));
+    hud.style.setProperty('--hs', Math.max(0.62, Math.min(1.0, 0.78 * k)).toFixed(3));
+  }
   bind() {
     const zone = $('touchzone');
     const opt = { passive: false };
@@ -101,7 +117,7 @@ export class TouchControls {
     this.base.classList.toggle('reach', dy < -R * 0.7);
     this.base.classList.toggle('lock', this.reachLock);
     this.base.classList.toggle('sprint', this.reachLock);
-    this.knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+    this.knob.style.transform = `translate(${dx * k / this.ts}px, ${dy * k / this.ts}px)`;
     this.inp.joy.x = dx * k / R; this.inp.joy.y = dy * k / R;
     this.inp.sprintLock = this.reachLock;
   }
@@ -122,7 +138,7 @@ export class TouchControls {
     for (const t of e.changedTouches) {
       if (t.identifier === this.joyId) {
         this.joyId = null; this.base.classList.remove('on', 'reach');
-        if (this.reachLock) { this.setLock(true); this.knob.style.transform = `translate(0px, ${-this.R}px)`; }
+        if (this.reachLock) { this.setLock(true); this.knob.style.transform = `translate(0px, ${-this.R / this.ts}px)`; }
         else { Object.assign(this.inp.joy, { active: false, x: 0, y: 0 }); this.setKnob(0, 0); this.base.classList.remove('reach'); }
         this.reachLock = false;
       }
@@ -146,7 +162,15 @@ export class TouchControls {
   }
 }
 
+// Must be called from a user gesture (tap). iPhone Safari has no element fullscreen: that case is handled by the
+// Add to Home Screen (PWA, display: fullscreen) hint instead.
 export async function goFullscreenLandscape() {
-  try { if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); } catch (e) {}
+  const d = document.documentElement;
+  try {
+    if (!isFullscreen()) {
+      if (d.requestFullscreen) await d.requestFullscreen({ navigationUI: 'hide' });
+      else if (d.webkitRequestFullscreen) d.webkitRequestFullscreen();
+    }
+  } catch (e) {}
   try { if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape'); } catch (e) {}
 }

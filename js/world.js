@@ -1,3 +1,4 @@
+import { asset } from './assets.js';
 // Procedural urban/industrial arena with PBR (Poly Haven CC0) materials and box colliders.
 import * as THREE from 'three';
 import { Box, NavGrid } from './physics.js';
@@ -23,7 +24,7 @@ export class World {
   }
   tex(name, srgb) {
     if (this.texCache[name]) return this.texCache[name];
-    const t = this.texLoader.load('assets/tex/' + name + '.webp');
+    const t = this.texLoader.load(asset('assets/tex/' + name + '.webp'));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = this.aniso;
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     return (this.texCache[name] = t);
@@ -86,7 +87,7 @@ export class World {
   // ---------------------------------------------------------------- city assets
   async loadCity(gltfLoader) {
     const files = ['modular_urban_apartments_facade', 'modular_factory_facade', 'street_lamp_01', 'street_lamp_02', 'fire_hydrant', 'metal_trash_can', 'concrete_road_barrier', 'concrete_road_barrier_02', 'covered_car', 'modular_fire_escape', 'rollershutter_door', 'exterior_aircon_unit', 'trashbag', 'old_tyre', 'sedan'];
-    const res = await Promise.all(files.map(f => gltfLoader.loadAsync('assets/city/' + f + '.glb')));
+    const res = await Promise.all(files.map(f => gltfLoader.loadAsync(asset('assets/city/' + f + '.glb'))));
     this.kits = {}; files.forEach((f, i) => { const sc = res[i].scene; sc.updateMatrixWorld(true); this.kits[f] = sc; });
     // painted variants of the CC0 sedan (Innerscene)
     const paints = [0x7e1416, 0x1d3550, 0xa9adb2, 0x1b1c1e, 0xdcdad4, 0x3a4a3a];
