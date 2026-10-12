@@ -126,41 +126,41 @@
   </div>
 </div>
 
-<div id="topbar" class="hidden">
+<div id="topbar" class="hidden"><div class="tb17">
   <div class="tlogo"><b>SWAT</b><span>URBAN SIEGE</span></div>
   <div class="ttabs"><kbd class="desktoponly">Q</kbd><button data-scr="menu">PLAY</button><button data-scr="loadout">WEAPONS</button><button data-scr="operators">OPERATORS</button><button data-scr="store">STORE</button><button data-scr="settings">SETTINGS</button><kbd class="desktoponly">E</kbd></div>
   <div class="tright">
-    <div class="tcur" title="Medkits"><span data-icon="cross"></span><b id="topMed">1</b></div>
-    <div class="tcur coin" title="Coins"><i class="coinic"></i><b id="topCoins">0</b></div>
-    <div class="trank"><div class="rk" id="topRank">1</div><div class="rn"><b id="topName">Operator</b><small id="topRankN">RECRUIT</small><div class="rx"><i id="topXp"></i></div></div></div>
+    <div class="tcur med" title="Medkits"><small>MEDKIT</small><span class="medic"></span><b id="topMed">1</b></div>
+    <div class="tcur coin" title="Gold coins"><small>GOLD</small><i class="coinic"></i><b id="topCoins">0</b><button id="topPlus" class="tplus" aria-label="Store">+</button></div>
+    <div class="trank" title="Rank"><div class="rk" id="topRank">1</div><div class="rx"><i id="topXp"></i></div><div class="rn hidden"><b id="topName">Operator</b><small id="topRankN">RECRUIT</small></div></div>
   </div>
-</div>
+</div></div>
 <div id="hintbar" class="hidden desktoponly"><span><kbd>ESC</kbd>BACK</span><span><kbd>Q</kbd><kbd>E</kbd>TABS</span></div>
 
-<div id="menu" class="screen hidden">
-  <div class="phead"><small>SWAT: URBAN SIEGE <span class="ver">v1.6</span></small><h1>PLAY</h1></div>
+<div id="menu" class="screen hidden v17"><div class="stg">
+  <div class="phead"><small>SWAT: URBAN SIEGE <span class="ver">v1.7</span></small><h1>PLAY</h1></div>
+  <div class="ping" id="pingTxt"><i class="wifi"></i>PING: —</div>
   <div class="mbuttons">
-    <button id="btnCampaign" class="mcard"><span class="mt">CAMPAIGN</span><span class="ms" id="campSub">10 missions across 3 maps</span><span class="mtag">STORY</span></button>
-    <button id="btnPlay" class="mcard"><span class="mt">SOLO SURVIVAL</span><span class="ms" id="soloSub">Pick a map and hold out against endless waves</span><span class="mtag">SOLO</span></button>
-    <button id="btnMP" class="mcard"><span class="mt">MULTIPLAYER</span><span class="ms">Team Deathmatch · Free-for-all · Co-op · Bots</span><span class="mtag">ONLINE</span></button>
-    <button id="btnLoadout" class="mcard sm"><span class="mt">LOADOUT</span><span class="ms" id="loadoutsum">M4A1 + M1911</span></button>
+    <button id="btnCampaign" class="mcard"><span class="mt">CAMPAIGN</span><span class="ms" id="campSub">ACT I: URBAN SIEGE (0% PROGRESS)</span><span class="tags"><em class="g">STORY</em><em>CO-OP</em></span></button>
+    <button id="btnPlay" class="mcard"><span class="mt">SOLO SURVIVAL</span><span class="ms" id="soloSub">PERSONAL BEST: —</span><span class="tags"><em class="g">SOLO</em><em>OFFLINE</em></span></button>
+    <button id="btnMP" class="mcard"><span class="mt">MULTIPLAYER</span><span class="ms">RANKED &amp; CASUAL PLAYLISTS</span><span class="tags"><em class="gr">ONLINE</em></span><span class="xp2"><i></i><em class="g">2X XP</em></span></button>
+    <button id="btnLoadout" class="mcard"><span class="mt">LOADOUT</span><span class="ms" id="loadoutsum">MANAGE GEAR &amp; WEAPONS</span><img id="menuGun" class="mgun" alt=""></button>
     <button id="btnSettings" class="mcard sm hidden"><span class="mt">SETTINGS</span></button>
     <button class="mcard sm appexit hidden"><span class="mt">EXIT GAME</span><span class="ms">Close the game</span></button>
   </div>
-  <div class="opplate"><small>OPERATOR</small><b id="menuOp">SWAT</b><span id="menuRole">Assaulter</span><span class="opname">Call sign <b id="menuname">—</b></span></div>
-</div>
+  <button id="btnDaily" class="daily">DAILY REWARDS</button>
+  <div class="opplate"><small>OPERATOR</small><b><span id="menuOp">SWAT</span> <i>/</i></b><span id="menuRole">ASSAULTER</span><span class="opname">Call sign <b id="menuname">—</b></span></div>
+</div></div>
 
-<div id="maps" class="screen hidden">
-  <div class="phead"><small>SOLO SURVIVAL · CHOOSE A MAP</small><h1>MAP SELECT</h1></div>
+<div id="maps" class="screen hidden v17"><div class="stg"><button class="edgeback" data-back aria-label="Back">‹</button>
   <div id="mapList" class="mapcards"></div>
-  <div class="scrfoot"><button class="ghost" data-back>BACK</button><button id="mapGo" class="primary">DEPLOY</button></div>
-</div>
+  <div class="scrfoot"><button class="bev grey" data-back>BACK</button><button id="mapGo" class="bev gold">DEPLOY</button></div>
+</div></div>
 
-<div id="campaign" class="screen hidden">
-  <div class="phead"><small>CAMPAIGN · <b id="campStars">0 / 30</b> STARS</small><h1>CAMPAIGN</h1></div>
+<div id="campaign" class="screen hidden v17"><div class="stg"><button class="edgeback" data-back aria-label="Back">‹</button>
   <div id="campList"></div>
-  <div class="scrfoot"><button class="ghost" data-back>BACK</button></div>
-</div>
+  <div class="scrfoot"><button class="bev camo" data-back>BACK</button><span class="cstars">★ <b id="campStars">0 / 30</b> STARS</span></div>
+</div></div>
 
 <div id="briefing" class="screen hidden">
   <div class="brief">
@@ -174,26 +174,25 @@
   </div>
 </div>
 
-<div id="operators" class="screen hidden">
-  <div class="phead"><small>CHOOSE YOUR OPERATOR</small><h1>OPERATORS</h1></div>
-  <div id="opList"></div>
-  <div id="opInfo"><small id="opRole">ASSAULTER</small><h2 id="opName">SWAT</h2><p id="opBlurb"></p><button id="opAct" class="primary wide">SELECT</button></div>
-</div>
+<div id="operators" class="screen hidden v17"><div class="stg">
+  <div class="oppanel"><div class="phead"><small>CHOOSE YOUR OPERATOR</small><h1>OPERATORS</h1></div><div id="opList"></div></div>
+  <div id="opInfo"><small id="opRole">ASSAULTER</small><h2 id="opName">SWAT</h2><p id="opBlurb"></p><p class="cs">Call sign <b id="opCall">—</b></p><button id="opAct" class="bev gold">SELECT</button></div>
+</div></div>
 
-<div id="store" class="screen hidden">
+<div id="store" class="screen hidden v17"><div class="stg">
   <div class="phead"><small>SPEND COINS EARNED IN MATCHES</small><h1>STORE</h1></div>
   <div id="storeGrid"></div>
-  <div class="storenote">Earn coins: kill +10 · headshot +5 · wave cleared +25 · match +30 · win +100 · kill streaks +15</div>
-</div>
+  <div class="storenote"><b>EARN COINS:</b> KILL +10 • HEADSHOT +5 • WAVE CLEARED +25 • MATCH +30 • WIN +100 • KILL STREAKS +15</div>
+</div></div>
 
-<div id="loadout" class="screen hidden full">
-  <div class="sh"><button class="back" data-back>‹</button><h1>LOADOUT</h1><div class="tabs" id="loTabs"><button data-slot="0" class="on">PRIMARY</button><button data-slot="1">SECONDARY</button></div></div>
-  <div class="lobody">
-    <div id="loList"></div>
-    <div id="loInfo"><div id="loClass">ASSAULT RIFLE</div><div id="loName">M4A1</div><div id="loStats"></div><div id="loSpecs"></div><button id="loEquip" class="primary wide">EQUIP</button></div>
-  </div>
-  <div class="lofoot"><span>PRIMARY <b id="loP">M4A1</b></span><span>SECONDARY <b id="loS">M1911</b></span></div>
-</div>
+<div id="loadout" class="screen hidden v17"><div class="stg">
+  <div id="loList"></div>
+  <div class="tabs" id="loTabs"><button data-slot="0" class="on">PRIMARY</button><button data-slot="1">SECONDARY</button></div>
+  <div id="callouts"><span data-c="barrel"><i></i>BARREL</span><span data-c="optic"><i></i>OPTIC</span><span data-c="stock"><i></i>STOCK</span></div>
+  <div id="loInfo"><div id="loClass">ASSAULT RIFLE</div><div id="loName">M4A1</div><button id="loSmith" class="smith">GUNSMITH / UPGRADE</button><div id="loStats"></div></div>
+  <div id="loSpecs"></div><button id="loEquip" class="bev gold">EQUIP</button>
+  <div class="lofoot hidden"><span>PRIMARY <b id="loP">M4A1</b></span><span>SECONDARY <b id="loS">M1911</b></span></div>
+</div></div>
 
 <div id="settings" class="screen hidden full">
   <div class="sh"><button class="back" data-back>‹</button><h1>SETTINGS</h1><div class="tabs" id="setTabs"><button data-tab="gfx" class="on">GRAPHICS</button><button data-tab="ctl">CONTROLS</button><button data-tab="aud">AUDIO</button><button data-tab="gp">GAMEPLAY</button></div></div>
@@ -270,19 +269,17 @@
   </div>
 </div>
 
-<div id="mpmenu" class="screen hidden full">
-  <div class="sh"><button class="back" data-back>‹</button><h1>MULTIPLAYER</h1></div>
+<div id="mpmenu" class="screen hidden v17"><div class="stg"><button class="edgeback" data-back aria-label="Back">‹</button>
   <div class="mpbody">
-    <label class="namefield">YOUR NAME <input id="mpName" maxlength="14" autocomplete="off"></label>
+    <label class="namefield"><span>YOUR NAME</span><span class="nbox"><input id="mpName" maxlength="14" autocomplete="off"><i class="pen"></i></span></label>
     <div class="mpcards">
-      <div class="card"><h3>HOST A ROOM</h3><p>Create a room and share the 5-letter code or link. Up to 8 players.</p><button id="btnHost" class="primary wide">CREATE ROOM</button></div>
-      <div class="card"><h3>JOIN A ROOM</h3><p>Enter the room code from your friend.</p><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="btnJoin" class="primary wide">JOIN</button></div>
-      <div class="card"><h3>BOT MATCH</h3><p>Team Deathmatch or Free-for-all against AI bots. Works offline.</p><button id="btnBots" class="wide">PLAY VS BOTS</button></div>
+      <div class="card"><h3>HOST A ROOM</h3><div class="art art-host"></div><p>Create a room and share the 5-letter code or link. Up to 8 players.</p><button id="btnHost" class="bev gold">CREATE ROOM</button></div>
+      <div class="card"><h3>JOIN A ROOM</h3><div class="art art-join"></div><p>Enter the room code from your friend.</p><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="btnJoin" class="bev gold">JOIN</button></div>
+      <div class="card hot"><h3>BOT MATCH</h3><div class="art art-bot"></div><p>Team Deathmatch or Free-for-all against AI bots. Works offline.</p><button id="btnBots" class="bev dark">PLAY VS BOTS</button></div>
     </div>
     <div id="mpstatus"></div>
-    <div class="note">Peer-to-peer over WebRTC. The host's device runs the match. Room codes go through the free public PeerJS server.</div>
   </div>
-</div>
+</div></div>
 
 <div id="lobby" class="screen hidden full">
   <div class="sh"><button class="back" id="lobbyLeave">‹</button><h1>LOBBY</h1><div class="roomcode">ROOM <b id="roomCode">-----</b><button id="btnCopy" class="small">COPY LINK</button><button id="btnShare" class="small">SHARE</button></div></div>

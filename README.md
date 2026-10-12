@@ -2,6 +2,12 @@
 
 A third-person shooter that runs in the browser. It's built with Three.js (r170, included in this folder) around your SWAT soldier (`Swat.fbx`) and its 49 Mixamo animations.
 
+## v1.7 menus
+- PLAY, OPERATORS, CAMPAIGN (scrollable, one section per map), WEAPONS (gunsmith), STORE, MULTIPLAYER and MAP SELECT rebuilt after the ui17 mockups on a 1024x572 stage that scales to the phone (740x360 to 1024x600).
+- Top bar: medkits, gold with + (opens the store), rank hex badge with XP bar. PLAY: ping, DAILY REWARDS (25 to 200 coins a day, a medkit on day 7), STORY / CO-OP / SOLO / OFFLINE / ONLINE / 2X XP tags (online matches really give double XP).
+- Art is rendered from the game itself: live 3D operator in front of a dusk police cordon (police car with flashing light bar, road barriers, sandbags), operator portraits from the character models, gun images and the live gunsmith view from the gun models, mission and map images from the real maps.
+- The GUNSMITH / UPGRADE button only shows an info dialog: weapon attachments don't exist in the game.
+
 ## v1.6 settings
 
 Settings is a full-screen sheet with four tabs (GRAPHICS / CONTROLS / AUDIO / GAMEPLAY), built in `js/settings.js`.

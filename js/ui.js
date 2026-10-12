@@ -25,10 +25,12 @@ export const TIPS = [
 ];
 export const STAT_DEFS = [
   ['DAMAGE', w => Math.min(1, w.dmg * w.pellets / 110), w => w.pellets > 1 ? `${w.dmg}×${w.pellets}` : w.dmg],
-  ['FIRE RATE', w => Math.min(1, 60 / w.cool / 1100), w => Math.round(60 / w.cool)],
+  ['FIRE RATE', w => Math.min(1, 60 / w.cool / 1000), w => Math.round(60 / w.cool)],
   ['RANGE', w => Math.min(1, (w.range[0] * 0.6 + w.range[1] * 0.4) / 140), w => w.range[0] + 'm'],
   ['MOBILITY', w => w.mob, w => Math.round(w.mob * 100)],
-  ['MAGAZINE', w => Math.min(1, w.mag / 34), w => w.mag],
+  // accuracy from the aimed spread, control from the recoil kick (both real weapon values)
+  ['ACCURACY', w => Math.max(0.08, Math.min(1, 1 - Math.log10(w.ads / 0.0002) / 2.4)), w => Math.round(Math.max(0.08, Math.min(1, 1 - Math.log10(w.ads / 0.0002) / 2.4)) * 100)],
+  ['CONTROL', w => Math.max(0.1, Math.min(1, 1 - (w.recoil - 0.008) / 0.06)), w => Math.round(Math.max(0.1, Math.min(1, 1 - (w.recoil - 0.008) / 0.06)) * 100)],
 ];
 
 export class UI {
@@ -156,12 +158,12 @@ export class UI {
       if (!owns('gun', id)) { const pr = PRICES.guns[id]; if (!rankOK('gun', id)) { this.dialog('RANK REQUIRED', `${WEAPON_BY_ID[id].name} unlocks at rank ${rankReq('gun', id)} (${rankName(rankReq('gun', id))}). Earn XP from kills, waves, matches and campaign missions.`); return; } if (!buy('gun', id, pr)) { this.dialog('NOT ENOUGH COINS', `${WEAPON_BY_ID[id].name} costs ${fmt(pr)} coins. You have ${fmt(prog().coins)}.`); return; } this.g.sfx.coins && this.g.sfx.coins(); this.g.meta.refreshTop(); }
       this.equip(id);
     };
+    $('loSmith').onclick = () => { const w = WEAPON_BY_ID[this.loSel]; this.dialog('GUNSMITH', `${w.name}: attachments and upgrades are not in this version yet. Barrel, optic and stock are the stock parts shown on the model.`); };
   }
   openLoadout() {
     const g = this.g;
     if (!this.pv) {
-      const sc = new THREE.Scene(); sc.environment = g.scene.environment; sc.background = g.scene.background;
-      sc.backgroundBlurriness = 0.5; sc.backgroundIntensity = 0.28; sc.environmentIntensity = 1.1;
+      const sc = new THREE.Scene(); sc.environment = g.scene.environment; sc.background = pegboard(); sc.environmentIntensity = 1.1;
       const key = new THREE.DirectionalLight(0xfff2e0, 2.6); key.position.set(2, 3, 2); sc.add(key);
       const rim = new THREE.DirectionalLight(0xa8c8ff, 1.8); rim.position.set(-3, 1.5, -2); sc.add(rim);
       const cam = new THREE.PerspectiveCamera(30, 1, 0.01, 50);
@@ -176,11 +178,12 @@ export class UI {
     const s = this.g.settings, ids = this.loSlot === 0 ? PRIMARIES : SECONDARIES, eq = this.loSlot === 0 ? s.primary : s.secondary;
     [...$('loTabs').children].forEach(b => b.classList.toggle('on', +b.dataset.slot === this.loSlot));
     if (!ids.includes(this.loSel)) this.loSel = eq;
-    $('loList').innerHTML = ids.map(id => { const w = WEAPON_BY_ID[id], own = owns('gun', id); return `<div class="lo${id === this.loSel ? ' sel' : ''}${id === eq ? ' eq' : ''}${own ? '' : ' locked'}" data-id="${id}"><img src="${w.thumb}" alt=""><div><b>${w.name}</b><small>${w.cls}</small></div>${own ? (id === eq ? '<em>EQUIPPED</em>' : '') : `<em class="price"><i class="coinic"></i>${fmt(PRICES.guns[id])}</em>`}</div>`; }).join('');
-    $('loList').querySelectorAll('.lo').forEach(el => {
+    const status = (id) => owns('gun', id) ? (id === eq ? '<em class="eq">EQUIPPED</em>' : '<em class="own">OWNED</em>') : !rankOK('gun', id) ? `<em class="rk"><span class="lock"></span>RANK ${rankReq('gun', id)}</em>` : `<em class="price"><i class="coinic"></i>${fmt(PRICES.guns[id])}</em>`;
+    $('loList').innerHTML = ids.map(id => { const w = WEAPON_BY_ID[id], own = owns('gun', id); return `<div class="lo${id === this.loSel ? ' sel' : ''}${id === eq ? ' eq' : ''}${own ? '' : ' locked'}" data-id="${id}"><div class="lt"><b>${w.name}</b><small>${w.cls}</small></div><img src="${w.thumb}" alt="">${status(id)}</div>`; }).join('')
+      + `<div class="lo sum"><div><b>PRIMARY</b><small id="loP">${WEAPON_BY_ID[s.primary].name}</small></div><div><b>SECONDARY</b><small id="loS">${WEAPON_BY_ID[s.secondary].name}</small></div></div>`;
+    $('loList').querySelectorAll('.lo:not(.sum)').forEach(el => {
       el.addEventListener('click', () => { if (this.loSel === el.dataset.id) { $('loEquip').click(); return; } this.loSel = el.dataset.id; this.renderLoadoutList(); this.preview(this.loSel); });
     });
-    $('loP').textContent = WEAPON_BY_ID[s.primary].name; $('loS').textContent = WEAPON_BY_ID[s.secondary].name;
     const own = owns('gun', this.loSel);
     if (own) $('loEquip').textContent = this.loSel === eq ? 'EQUIPPED' : 'EQUIP ' + (this.loSlot === 0 ? 'PRIMARY' : 'SECONDARY');
     else if (!rankOK('gun', this.loSel)) $('loEquip').innerHTML = `RANK ${rankReq('gun', this.loSel)} REQUIRED`;
@@ -195,10 +198,11 @@ export class UI {
     localStorage.setItem('swat-settings', JSON.stringify(s)); this.g.sfx.switchWeapon(); this.renderLoadoutList(); this.refreshMenu();
   }
   statBars(w) {
-    $('loName').textContent = w.name; $('loClass').textContent = w.cls + (w.auto ? ' · FULL AUTO' : w.pump ? ' · PUMP ACTION' : ' · SEMI AUTO');
-    if (!$('loStats').children.length) $('loStats').innerHTML = STAT_DEFS.map(([n]) => `<div class="stat"><span>${n}</span><div class="bar"><i></i></div><em></em></div>`).join('');
-    [...$('loStats').children].forEach((el, i) => { el.querySelector('i').style.width = (STAT_DEFS[i][1](w) * 100).toFixed(0) + '%'; el.querySelector('em').textContent = STAT_DEFS[i][2](w); });
-    $('loSpecs').innerHTML = `<span><small>FIRE MODE</small>${w.auto ? 'AUTO' : w.pump ? 'PUMP' : 'SEMI'}</span><span><small>MAGAZINE</small>${w.mag}</span><span><small>RESERVE</small>${w.reserve ?? '—'}</span>`;
+    $('loName').textContent = w.name; $('loClass').textContent = w.cls + (w.auto ? ' • FULL AUTO' : w.pump ? ' • PUMP ACTION' : w.scope ? ' • BOLT / SCOPED' : ' • SEMI AUTO');
+    // segmented bars, two columns (DAMAGE / FIRE RATE / RANGE | MOBILITY / ACCURACY / CONTROL)
+    if (!$('loStats').children.length) $('loStats').innerHTML = STAT_DEFS.map(([n]) => `<div class="stat"><span>${n}</span><div class="bar">${'<i></i>'.repeat(16)}</div><em></em></div>`).join('');
+    [...$('loStats').children].forEach((el, i) => { const n = Math.round(STAT_DEFS[i][1](w) * 16); [...el.querySelector('.bar').children].forEach((x, j) => x.classList.toggle('on', j < n)); el.querySelector('em').textContent = STAT_DEFS[i][2](w); });
+    $('loSpecs').innerHTML = `<span><small>FIRE MODE</small>${w.auto ? 'AUTO' : w.pump ? 'PUMP' : w.scope ? 'BOLT' : 'SEMI'}</span><span><small>MAGAZINE</small>${w.mag}</span><span><small>RESERVE</small>${w.reserve ?? w.mag * 6}</span>`;
   }
   preview(id) {
     const pv = this.pv; if (!pv) return;
@@ -209,20 +213,40 @@ export class UI {
       holder.traverse(o => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = false; } });
       pv.guns[id] = holder;
     }
-    pv.pivot.clear(); pv.pivot.add(pv.guns[id]); pv.size = pv.guns[id].userData.size; pv.spin = 0.6; pv.pivot.rotation.y = -Math.PI / 2 - 0.35; // start side-on, muzzle to the right
+    pv.pivot.clear(); pv.pivot.add(pv.guns[id]); pv.size = pv.guns[id].userData.size; pv.spin = 0.6; pv.pivot.rotation.y = -Math.PI / 2 - 0.35; pv.t = 0; // start side-on, muzzle to the right
+    // callout anchors in the gun's local frame: muzzle end, top centre (optic / sights), butt end
+    const bb = new THREE.Box3().setFromObject(pv.guns[id]); const ax = (bb.max.x - bb.min.x) > (bb.max.z - bb.min.z) ? 'x' : 'z', V = (u, y) => ax === 'x' ? new THREE.Vector3(-u, y, 0) : new THREE.Vector3(0, y, u); /* rotation -90° about y: local -z (or +x) is the muzzle side */
+    const lo = ax === 'x' ? -bb.max.x : bb.min.z, hi = ax === 'x' ? -bb.min.x : bb.max.z;
+    pv.anchors = { barrel: V(hi * 0.84, bb.max.y * 0.2), optic: V((lo + hi) * 0.5 + (hi - lo) * 0.04, bb.max.y * 0.9), stock: V(lo * 0.8, bb.max.y * 0.4) };
   }
   // called every frame while the loadout screen is open; returns true if it rendered
   renderPreview(dt) {
     const pv = this.pv; if (!pv || this.cur !== 'loadout') return false;
     const r = this.g.renderer, w = innerWidth, h = innerHeight;
     pv.t += dt; pv.spin = Math.max(0, pv.spin - dt * 0.8);
-    pv.pivot.rotation.y += dt * (0.45 + pv.spin * 2.5); pv.pivot.rotation.x = Math.sin(pv.t * 0.7) * 0.06;
-    const cam = pv.cam; cam.aspect = w / h;
-    const dist = pv.size * 0.62 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, 1.9 / (w / h));
-    cam.position.set(0, pv.size * 0.12, dist); cam.lookAt(0, 0, 0);
-    // put the gun in the right part of the screen (the list is on the left)
-    const sh = w > h * 1.2 ? -w * 0.17 : 0; cam.setViewOffset(w, h, sh, h * (h < 520 ? 0.25 : 0.2), w, h); cam.updateProjectionMatrix();
-    r.render(pv.sc, cam); return true;
+    // v1.7: shown side-on like the gunsmith shot, swaying slowly (drag-free), with a spin when a gun is picked
+    pv.pivot.rotation.y = -Math.PI / 2 + Math.sin(pv.t * 0.45) * 0.32 + pv.spin * 6.3; pv.pivot.rotation.x = Math.sin(pv.t * 0.7) * 0.04;
+    const cam = pv.cam; cam.aspect = w / h; cam.fov = 30;
+    const dist = pv.size / (0.9 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * (w / h)); // the gun spans ~45% of the width
+    cam.position.set(0, pv.size * 0.05, dist); cam.lookAt(0, 0, 0);
+    // the gun sits upper-right (the list is left, the stat panel below)
+    cam.setViewOffset(w, h, -w * 0.18, h * 0.07, w, h); cam.updateProjectionMatrix();
+    r.render(pv.sc, cam);
+    // callouts follow their anchor points
+    const g0 = pv.pivot.children[0]; if (g0 && pv.anchors) { pv.pivot.updateMatrixWorld(true);
+      for (const el of $('callouts').children) { const a = pv.anchors[el.dataset.c]; const v = a.clone().applyMatrix4(pv.pivot.matrixWorld).project(cam);
+        const k = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--k17')) || 1; el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w / k).toFixed(0)}px, ${((-v.y * 0.5 + 0.5) * h / k).toFixed(0)}px)`; /* #callouts lives on the scaled stage */ } }
+    return true;
   }
+}
+// dark workshop pegboard behind the gunsmith view (canvas texture)
+function pegboard() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512; const x = c.getContext('2d');
+  const gr = x.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, '#2a2e31'); gr.addColorStop(1, '#151719'); x.fillStyle = gr; x.fillRect(0, 0, 1024, 512);
+  for (let yy = 14; yy < 512; yy += 22) for (let xx = 14; xx < 1024; xx += 22) { x.fillStyle = 'rgba(0,0,0,.55)'; x.beginPath(); x.arc(xx, yy, 3.4, 0, 7); x.fill(); x.fillStyle = 'rgba(255,255,255,.05)'; x.beginPath(); x.arc(xx + 0.8, yy + 1, 3.4, 0, 3.2); x.fill(); }
+  // hanging tool silhouettes
+  x.fillStyle = 'rgba(10,11,12,.55)'; for (let i = 0; i < 9; i++) { const xx = 360 + i * 64, L = 70 + (i * 37) % 60; x.fillRect(xx, 60, 7, L); x.fillRect(xx - 9, 60 + L, 25, 14); }
+  const v = x.createRadialGradient(512, 230, 80, 512, 256, 620); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.75)'); x.fillStyle = v; x.fillRect(0, 0, 1024, 512);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 export function cleanName(n) { return String(n || '').replace(/[^\p{L}\p{N} _.\-]/gu, '').trim().slice(0, 14); }

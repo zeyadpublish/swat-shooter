@@ -13,6 +13,7 @@ import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { SettingsUI, SET_DEFAULTS, GFX_PRESETS, migrateSettings } from './settings.js';
 import { Voice } from './voice.js';
+import { MenuSet } from './menuset.js';
 import { World, analyzeHDR } from './world.js';
 import { MAPS, MAP_BY_ID } from './maps.js';
 import { Campaign } from './campaign.js';
@@ -351,7 +352,7 @@ class Game {
     this.sfx.onSubtitle = (t) => this.hud.subtitle(t.toUpperCase());
     this.sfx.occluder = (pos) => { const c = this.camera.position, d = pos.clone().sub(c), L = d.length(); if (L < 2 || L > 60) return false; d.divideScalar(L); const h = raycastBoxes(this.world.boxes, c, d, L - 0.8); return !!h; };
     this.setupPost(); this.applySettings();
-    this.mp = new MP(this); this.voice = new Voice(this);
+    this.mp = new MP(this); this.voice = new Voice(this); this.menuSet = new MenuSet(this);
     this.campaign = new Campaign(this);
     this.meta = new Meta(this); this.bindUI(); this.bindInput(); this.resetEarn();
     this.setPlayerTint(this.opLook());
@@ -475,7 +476,7 @@ class Game {
     id = MAP_BY_ID[id] ? id : 'city'; if (this.world.mapId === id) return false;
     this.world.build({ lite: this.lite, map: id });
     if (this.vehicles) this.vehicles.setSpawns(this.world.vehicleSpawns);
-    this.hud.map = null; this.applyEnv(); this.applyReflections(); this.applyTextures(); if (this.fx && this.fx.decals) for (const d of this.fx.decals) d.visible = false;
+    this.hud.map = null; this.applyEnv(); this.applyReflections(); this.applyTextures(); if (this.menuSet) this.menuSet.on = !this.menuSet.on && false; if (this.fx && this.fx.decals) for (const d of this.fx.decals) d.visible = false;
     if (this.player && this.state === 'menu') { this.player.reset(this.world.playerSpawn); this.menuPose && this.menuPose(); }
     return true;
   }
@@ -486,7 +487,7 @@ class Game {
     this.scene.environmentIntensity = e.envI; this.scene.backgroundIntensity = e.bgI;
   }
   resetEarn() { this.earn = { kills: 0, hs: 0, waves: 0, streakXP: 0, streakCoins: 0, coins: 0, xp: 0, startXP: prog().xp }; }
-  reward(coins, xp) { if (!this.earn) this.resetEarn(); this.earn.coins += coins; this.earn.xp += xp; addCoins(coins); const r = addXP(xp); if (r.up) this.rankUp(r.after.lv); }
+  reward(coins, xp) { if (!this.earn) this.resetEarn(); if (this.mp && this.mp.active) xp *= 2; /* v1.7: multiplayer earns double XP (the 2X XP badge) */ this.earn.coins += coins; this.earn.xp += xp; addCoins(coins); const r = addXP(xp); if (r.up) this.rankUp(r.after.lv); }
   rankUp(lv) { this.sfx.announce('Rank up. ' + rankName(lv) + '.');
     const un = Object.entries(RANK_REQ).flatMap(([k, o]) => Object.entries(o).filter(([, v]) => v === lv).map(([id]) => k === 'gun' ? (WEAPON_BY_ID[id] || {}).name : id.toUpperCase())).filter(Boolean);
     const el = $('rankup'); el.innerHTML = `<div class="rkb">${lv}</div><div><small>RANK UP</small><b>${rankName(lv)}</b>${un.length ? `<span>UNLOCKED: ${un.join(' · ')}</span>` : ''}</div>`;
@@ -761,7 +762,7 @@ class Game {
     const p = this.player, cam = this.camera;
     if (this.state === 'menu') {
       // slow orbit around the operator; the view is shifted so he stands right of the menu buttons
-      const t = this.time * 0.08 + 0.6; const c = p.pos.clone().add(new THREE.Vector3(0, 1.15, 0));
+      const t = Math.PI + 0.5 + Math.sin(this.time * 0.06) * 0.2; const c = p.pos.clone().add(new THREE.Vector3(0, 1.15, 0)); // v1.7: gentle sway so the police cordon stays behind him
       cam.position.set(c.x + Math.sin(t) * 3.9, c.y + 0.25 + Math.sin(t * 0.7) * 0.12, c.z + Math.cos(t) * 3.9);
       cam.lookAt(c); cam.fov = 40;
       const w = innerWidth, h = innerHeight; if (w > h * 1.15) cam.setViewOffset(w, h, -w * 0.17, 0, w, h); else cam.clearViewOffset();
@@ -828,6 +829,7 @@ class Game {
     if (this.state === 'playing' || this.state === 'gameover') this.updateGame(dt);
     else if (this.state === 'menu') { this.time += dt; this.player.c.update(dt); }
     this.updateCamera(dt);
+    if (this.menuSet) this.menuSet.update(dt);
     this.fx.update(dt);
     // keep the sun shadow frustum centred on the action
     const p = this.player.pos; this.sun.target.position.set(p.x * 0.3, 0, p.z * 0.3); this.sun.position.copy(this.sun.target.position).add(this.sunOffset);
