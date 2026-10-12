@@ -20,6 +20,12 @@
 <script type="importmap">{"imports":{"three":"./libs/three/three.module.js","three/addons/":"./libs/three/addons/"}}</script>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="cb-protan"><feColorMatrix type="matrix" values="0.567 0.433 0 0 0  0.558 0.442 0 0 0  0 0.242 0.758 0 0  0 0 0 1 0"/></filter>
+  <filter id="cb-deutan"><feColorMatrix type="matrix" values="0.625 0.375 0 0 0  0.7 0.3 0 0 0  0 0.3 0.7 0 0  0 0 0 1 0"/></filter>
+  <filter id="cb-tritan"><feColorMatrix type="matrix" values="0.95 0.05 0 0 0  0 0.433 0.567 0 0  0 0.475 0.525 0 0  0 0 0 1 0"/></filter>
+</defs></svg>
+
 <canvas id="c"></canvas>
 <div id="hud" class="hidden">
   <div id="vignette"></div>
@@ -39,6 +45,7 @@
   <div id="killfeed"></div>
   <div id="mpbar" class="hidden"><div class="team blue"><b id="scoreA">0</b><small id="nameA">BLUE</small></div><div id="mptimer">10:00</div><div class="team red"><b id="scoreB">0</b><small id="nameB">RED</small></div></div>
   <div id="nameplates"></div>
+  <div id="subs"></div><div id="voiceInd"></div>
   <div id="popups"></div>
   <div id="streak"></div>
   <div id="wavecard" class="hidden"></div>
@@ -85,6 +92,7 @@
       <button id="tCrouch" data-label="CROUCH" class="tb toggle" data-icon="crouch" aria-label="Crouch"></button>
       <button id="tSprint" data-label="RUN" class="tb toggle" data-icon="sprint" aria-label="Sprint"></button>
     </div>
+    <button id="tTalk" aria-label="Push to talk">TALK</button>
     <button id="tPause" data-label="SETTINGS" class="tb small" data-icon="gear" aria-label="Pause / settings"></button>
     <button id="tSwap" data-label="SWAP" class="tb small" data-icon="swap" aria-label="Next weapon"></button>
     <button id="tScore" class="tb small mponly" data-icon="list" aria-label="Scoreboard"></button>
@@ -130,7 +138,7 @@
 <div id="hintbar" class="hidden desktoponly"><span><kbd>ESC</kbd>BACK</span><span><kbd>Q</kbd><kbd>E</kbd>TABS</span></div>
 
 <div id="menu" class="screen hidden">
-  <div class="phead"><small>SWAT: URBAN SIEGE <span class="ver">v1.5</span></small><h1>PLAY</h1></div>
+  <div class="phead"><small>SWAT: URBAN SIEGE <span class="ver">v1.6</span></small><h1>PLAY</h1></div>
   <div class="mbuttons">
     <button id="btnCampaign" class="mcard"><span class="mt">CAMPAIGN</span><span class="ms" id="campSub">10 missions across 3 maps</span><span class="mtag">STORY</span></button>
     <button id="btnPlay" class="mcard"><span class="mt">SOLO SURVIVAL</span><span class="ms" id="soloSub">Pick a map and hold out against endless waves</span><span class="mtag">SOLO</span></button>

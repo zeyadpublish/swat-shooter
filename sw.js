@@ -1,6 +1,6 @@
 // Service worker: makes the game installable and caches the mobile asset set for fast reloads.
 // Paths are relative to the worker's location, so it works under any sub-path (e.g. /swat-shooter/).
-const CACHE = 'swat-v1.5.0';
+const CACHE = 'swat-v1.6.0';
 const BASE = new URL('./', self.location).href;
 const SHELL = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'assets/ui/icon-192.png'];
 self.addEventListener('install', (e) => {

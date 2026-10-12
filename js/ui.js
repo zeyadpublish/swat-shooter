@@ -69,6 +69,7 @@ export class UI {
     $('hud').classList.toggle('hidden', !inGame);
     if (id === 'loadout') this.openLoadout();
     if (id === 'menu') this.refreshMenu();
+    if (id === 'settings' && this.g.settingsUI) { this.g.settingsUI.fit(); this.g.settingsUI.refresh(); }
     this.g.meta && this.g.meta.onShow(id);
     this.g.onScreen && this.g.onScreen(id);
   }
@@ -86,32 +87,8 @@ export class UI {
 
   // ---------------- settings (tabs, all saved to localStorage) ----------------
   bindSettings() {
-    const g = this.g, s = g.settings;
-    const save = () => localStorage.setItem('swat-settings', JSON.stringify(s));
-    const bind = (id, key, fmt, num = true, after) => {
-      const el = $(id), val = $('val' + id.slice(3));
-      if (el.type === 'checkbox') el.checked = !!s[key]; else el.value = s[key];
-      const upd = () => { s[key] = el.type === 'checkbox' ? el.checked : num ? parseFloat(el.value) : el.value; if (val) val.textContent = fmt ? fmt(s[key]) : ''; };
-      upd();
-      el.addEventListener(el.tagName === 'SELECT' || el.type === 'checkbox' ? 'change' : 'input', () => { upd(); save(); after && after(); });
-    };
-    const pct = v => Math.round(v * 100) + '%';
-    bind('optQuality', 'quality', null, false, () => g.applySettings()); bind('optRes', 'res', null, false, () => g.applySettings());
-    bind('optFov', 'fov', v => v + '°'); bind('optFps', 'fps');
-    bind('optSens', 'sens', v => v.toFixed(2)); bind('optAdsSens', 'adsSens', v => v.toFixed(2)); bind('optInvert', 'invert');
-    bind('optHand', 'hand', null, false, () => { g.touch && g.touch.applySettings(); this.applyLayout(); });
-    bind('optBtnOp', 'btnOp', pct, true, () => g.touch && g.touch.applySettings()); bind('optHaptics', 'haptics');
-    const vol = () => g.sfx.setVolume(s.vol, s.fxVol, s.uiVol);
-    bind('optVol', 'vol', pct, true, vol); bind('optFxVol', 'fxVol', pct, true, vol); bind('optUiVol', 'uiVol', pct, true, () => { vol(); g.sfx.ui('hover'); });
-    bind('optName', 'name', null, false, () => { s.name = cleanName(s.name) || s.name; this.refreshMenu(); });
-    $('optName').addEventListener('change', () => { s.name = cleanName($('optName').value) || 'Operator'; $('optName').value = s.name; save(); this.refreshMenu(); });
-    bind('optDmgNum', 'dmgNum'); bind('optXp', 'xp'); bind('optXhair', 'xhair', null, false, () => g.hud.applyCrosshair()); bind('optAllW', 'allWeapons', null, true, () => this.refreshMenu());
-    const tabs = [...$('setTabs').children];
-    tabs.forEach(b => b.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.toggle('on', t === b));
-      document.querySelectorAll('.setbody .tab').forEach(t => t.classList.toggle('hidden', t.dataset.tab !== b.dataset.tab));
-    }));
-    $('btnLayout').onclick = () => this.editLayout();
+    // v1.6: the settings sheet itself is js/settings.js (SettingsUI); only the entry points live here
+    $('btnLayout').onclick = () => { if (this.g.touch) this.editLayout(); else this.g.hud.toast('HUD LAYOUT EDITOR IS FOR TOUCH SCREENS'); };
     $('btnSettings').onclick = () => this.show('settings');
     $('btnPauseSettings').onclick = () => this.show('settings');
     $('btnLoadout').onclick = () => this.show('loadout');
@@ -159,7 +136,7 @@ export class UI {
     const finish = (keep) => {
       root.removeEventListener('pointerdown', down, true); removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true); removeEventListener('pointercancel', up, true);
       els.forEach(b => b.classList.remove('sel'));
-      if (keep) { s.ctl = work; s.ctlScale = gscale; localStorage.setItem('swat-settings', JSON.stringify(s)); }
+      if (keep) { s.ctl = work; s.ctlScale = gscale; localStorage.setItem('swat-settings', JSON.stringify(s)); g.settingsUI && g.settingsUI.onLayoutSaved(); }
       else { s.ctl = saved.ctl; s.ctlScale = saved.ctlScale; }
       g.touch.placeControls(); document.body.classList.remove('editing'); $('layouted').classList.add('hidden');
       g.touch.reset(); this.show('settings', false);

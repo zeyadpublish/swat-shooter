@@ -1,16 +1,21 @@
 // Synthesised WebAudio sound effects (no audio files).
 export class Sfx {
-  constructor() { this.ctx = null; this.volume = 0.8; this.fxVol = 1; this.uiVol = 0.8; }
+  constructor() { this.ctx = null; this.volume = 0.8; this.fxVol = 1; this.uiVol = 0.8; this.cfg = {}; this.panModel = 'HRTF'; }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
     const ctx = this.ctx = new C();
     this.master = ctx.createGain(); this.master.gain.value = this.volume;
-    const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
-    this.master.connect(comp); comp.connect(ctx.destination);
+    const comp = this.comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
+    // tone shaping for the audio presets (low shelf), then the compressor (dynamic range)
+    this.shelf = ctx.createBiquadFilter(); this.shelf.type = 'lowshelf'; this.shelf.frequency.value = 160; this.shelf.gain.value = 0;
+    this.master.connect(this.shelf); this.shelf.connect(comp); comp.connect(ctx.destination);
     // buses: game effects and interface sounds, each with its own volume
     this.fxBus = ctx.createGain(); this.fxBus.gain.value = this.fxVol; this.fxBus.connect(this.master);
     this.uiBus = ctx.createGain(); this.uiBus.gain.value = this.uiVol; this.uiBus.connect(this.master);
+    // v1.6 buses: music, dialogue / announcer, ambience, footsteps, voice chat
+    for (const b of ['musicBus', 'dlgBus', 'ambBus', 'voiceBus']) { this[b] = ctx.createGain(); this[b].connect(this.master); }
+    this.footBus = ctx.createGain(); this.footBus.connect(this.fxBus);
     // noise buffer
     const len = ctx.sampleRate * 2; this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -19,9 +24,44 @@ export class Sfx {
     for (let c = 0; c < 2; c++) { const b = ir.getChannelData(c); for (let i = 0; i < b.length; i++) { const t = i / ctx.sampleRate; b[i] = (Math.random() * 2 - 1) * Math.pow(1 - t / 1.6, 3) * (t > 0.06 && t < 0.09 ? 2.2 : 0.6); } }
     this.verb = ctx.createConvolver(); this.verb.buffer = ir; this.verbGain = ctx.createGain(); this.verbGain.gain.value = 0.35;
     this.verb.connect(this.verbGain); this.verbGain.connect(this.fxBus);
-    this.ambient();
+    this.ambient(); this.configure(this.cfg); if (this.menuMusicOn) this.music(true);
   }
-  setVolume(v, fx = this.fxVol, ui = this.uiVol) {
+  // apply the AUDIO tab (called live from the settings sheet)
+  configure(s) {
+    this.cfg = s || {}; s = this.cfg; this.volume = s.vol ?? this.volume; this.fxVol = s.fxVol ?? this.fxVol; this.uiVol = s.uiVol ?? this.uiVol;
+    this.panModel = s.hrtf === false ? 'equalpower' : 'HRTF';
+    if (!this.ctx) return; const t = this.ctx.currentTime, set = (p, v) => p.setTargetAtTime(v, t, 0.03);
+    const pre = s.aPreset || 'foot';
+    set(this.master.gain, this.volume); set(this.fxBus.gain, this.fxVol); set(this.uiBus.gain, this.uiVol);
+    set(this.musicBus.gain, (s.musicVol ?? 0.5) * 0.6); set(this.dlgBus.gain, s.dlgVol ?? 0.8); set(this.ambBus.gain, (s.ambVol ?? 0.4) * 2.5); set(this.voiceBus.gain, s.voiceVol ?? 0.85);
+    set(this.footBus.gain, pre === 'foot' ? 1.8 : pre === 'night' ? 1.3 : 1);
+    set(this.shelf.gain, pre === 'cinematic' ? 5 : pre === 'night' ? -6 : 0);
+    // dynamic range: FULL = light limiting, MEDIUM = the default, LOW (NIGHT) = heavy compression; no choice = by preset
+    const dr = s.dynRange || (pre === 'night' ? 'low' : pre === 'studio' ? 'full' : 'medium'), C = this.comp;
+    const D = { full: [-6, 2, 0.003], medium: [-14, 4, 0.003], low: [-32, 12, 0.002] }[dr] || [-14, 4, 0.003];
+    set(C.threshold, D[0]); set(C.ratio, D[1]); C.attack.value = D[2];
+    // reverb amount: audio quality + preset; LOW quality or occlusion/reverb OFF = dry
+    const q = s.aQ || 'high', vg = s.occl === false || q === 'low' ? 0 : (q === 'medium' ? 0.25 : q === 'ultra' ? 0.48 : 0.35) * (pre === 'cinematic' ? 1.5 : pre === 'studio' ? 0.6 : 1);
+    set(this.verbGain.gain, vg);
+  }
+  // simple procedural menu music (pad chord + slow pulse), on the MUSIC bus
+  music(on) {
+    this.menuMusicOn = on; if (!this.ctx) return; const ctx = this.ctx, t = ctx.currentTime;
+    if (on && !this.pad) {
+      const out = ctx.createGain(); out.gain.value = 0; out.gain.setTargetAtTime(0.12, t, 1.5); out.connect(this.musicBus);
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900; f.connect(out);
+      const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 0.07; lg.gain.value = 400; lfo.connect(lg); lg.connect(f.frequency); lfo.start();
+      const osc = [55, 82.4, 110, 130.8, 164.8].map((hz, i) => { const o = ctx.createOscillator(); o.type = i < 2 ? 'sawtooth' : 'triangle'; o.frequency.value = hz; o.detune.value = (i - 2) * 6; const g = ctx.createGain(); g.gain.value = i < 2 ? 0.25 : 0.18; o.connect(g); g.connect(f); o.start(); return o; });
+      this.pad = { out, osc, lfo };
+    } else if (!on && this.pad) { const P = this.pad; this.pad = null; P.out.gain.setTargetAtTime(0, t, 0.4); setTimeout(() => { P.osc.forEach(o => o.stop()); P.lfo.stop(); }, 2000); }
+  }
+  // announcer line: speech synthesis at the DIALOGUE volume (+ subtitles via the callback)
+  announce(text) {
+    if (this.onSubtitle) this.onSubtitle(text);
+    const v = (this.cfg.dlgVol ?? 0.8) * this.volume; if (v <= 0.01 || !window.speechSynthesis || this.mute) return;
+    try { const u = new SpeechSynthesisUtterance(text); u.volume = Math.min(1, v); u.rate = 1.05; u.pitch = 0.8; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {}
+  }
+  setVolume(v, fx = this.fxVol, ui = this.uiVol) { if (this.ctx && this.cfg.vol !== undefined) { this.cfg.vol = v; this.cfg.fxVol = fx; this.cfg.uiVol = ui; return this.configure(this.cfg); }
     this.volume = v; this.fxVol = fx; this.uiVol = ui;
     if (this.master) { this.master.gain.value = v; this.fxBus.gain.value = fx; this.uiBus.gain.value = ui; }
   }
@@ -44,10 +84,13 @@ export class Sfx {
     if (!this.ctx) return; const t = this.ctx.currentTime, o = this.ctx.createGain(); o.connect(this.uiBus); o.gain.value = 1.4;
     this.tone(o, t, 62, 40, 0.14, 0.9); this.tone(o, t + 0.2, 55, 36, 0.16, 0.7);
   }
-  out(pos) {
+  out(pos, bus = this.fxBus) {
     const ctx = this.ctx; const g = ctx.createGain();
-    if (pos) { const p = ctx.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.1; p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; g.connect(p); p.connect(this.fxBus); p.connect(this.verb); }
-    else { g.connect(this.fxBus); g.connect(this.verb); }
+    // sound occlusion: a wall between the listener and the source muffles it (low-pass + quieter)
+    if (pos && this.cfg.occl !== false && this.occluder && this.occluder(pos)) { const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 800; const og = ctx.createGain(); og.gain.value = 0.45; g.connect(lp); lp.connect(og);
+      const p = ctx.createPanner(); p.panningModel = this.panModel; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.1; p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; og.connect(p); p.connect(bus); p.connect(this.verb); return g; }
+    if (pos) { const p = ctx.createPanner(); p.panningModel = this.panModel; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.1; p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; g.connect(p); p.connect(bus); p.connect(this.verb); }
+    else { g.connect(bus); g.connect(this.verb); }
     return g;
   }
   noiseBurst(dest, t, { type = 'bandpass', freq = 1000, q = 1, gain = 1, attack = 0.001, decay = 0.1, offset = 0 } = {}) {
@@ -103,11 +146,12 @@ export class Sfx {
   coins() { if (!this.ctx) return; const t = this.ctx.currentTime, o = this.out(); this.tone(o, t, 1320, 1320, 0.07, 0.12, 'triangle'); this.tone(o, t + 0.07, 1760, 1760, 0.12, 0.12, 'triangle'); }
   empty() { this.click(2600, 0.4); }
   reload(k = 1) { this.click(1800, 0.45, 0.15 * k); this.click(1200, 0.35, 0.22 * k); this.click(2400, 0.5, 1.2 * k); this.click(1500, 0.5, 1.25 * k); this.click(3200, 0.5, 1.75 * k); this.click(2000, 0.6, 1.85 * k); }
-  hit(head) { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(); if (head) { this.tone(o, t, 2400, 2300, 0.18, 0.18); this.tone(o, t, 3600, 3500, 0.12, 0.1); } else this.tone(o, t, 1700, 1500, 0.05, 0.14, 'triangle'); }
+  hit(head, kill) { if (!this.ctx) return; const m = this.cfg.hmSnd || 'std'; if (m === 'off') return; const t = this.ctx.currentTime; const o = this.out();
+    if (m === 'dyn') { const k = kill ? 0.75 : 1 + (Math.random() - 0.5) * 0.12; o.gain.value = kill ? 1.5 : 1; this.tone(o, t, (head ? 2400 : 1700) * k, (head ? 2300 : 1500) * k, head ? 0.18 : 0.06, 0.15, 'triangle'); if (kill) this.tone(o, t + 0.05, 880, 600, 0.2, 0.14); return; } if (head) { this.tone(o, t, 2400, 2300, 0.18, 0.18); this.tone(o, t, 3600, 3500, 0.12, 0.1); } else this.tone(o, t, 1700, 1500, 0.05, 0.14, 'triangle'); }
   impact(pos, kind) { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(pos); o.gain.value = 0.6;
     if (kind === 'metal') { this.tone(o, t, 2200 + Math.random() * 1500, 1800, 0.2, 0.15, 'triangle'); this.noiseBurst(o, t, { freq: 4000, q: 2, gain: 0.3, decay: 0.05 }); }
     else this.noiseBurst(o, t, { type: 'lowpass', freq: kind === 'wood' ? 900 : 1500, gain: 0.5, decay: 0.07 }); }
-  step(pos, gain = 0.12) { if (!this.ctx) return; const o = this.out(pos); this.noiseBurst(o, this.ctx.currentTime, { type: 'lowpass', freq: 500 + Math.random() * 300, q: 1, gain, decay: 0.07 }); }
+  step(pos, gain = 0.12) { if (!this.ctx) return; if (pos && this.cfg.foot3d) gain *= 1.6; const o = this.out(pos, this.footBus); this.noiseBurst(o, this.ctx.currentTime, { type: 'lowpass', freq: 500 + Math.random() * 300, q: 1, gain, decay: 0.07 }); }
   shellTink(pos) { if (!this.ctx) return; const o = this.out(pos); o.gain.value = 0.25; this.tone(o, this.ctx.currentTime, 5200 + Math.random() * 1500, 4800, 0.08, 0.08, 'triangle'); }
   hurt() { if (!this.ctx) return; const t = this.ctx.currentTime; const o = this.out(); this.tone(o, t, 90, 45, 0.25, 0.8); this.noiseBurst(o, t, { type: 'lowpass', freq: 600, gain: 0.5, decay: 0.15 }); }
   whiz(pos) { if (!this.ctx) return; const o = this.out(pos); this.noiseBurst(o, this.ctx.currentTime, { type: 'bandpass', freq: 3500, q: 8, gain: 0.35, attack: 0.03, decay: 0.08 }); }
@@ -115,7 +159,7 @@ export class Sfx {
     const ctx = this.ctx; const s = ctx.createBufferSource(); s.buffer = this.noise; s.loop = true;
     const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 350;
     const g = ctx.createGain(); g.gain.value = 0.05; const lfo = ctx.createOscillator(); lfo.frequency.value = 0.08; const lg = ctx.createGain(); lg.gain.value = 0.03;
-    lfo.connect(lg); lg.connect(g.gain); s.connect(f); f.connect(g); g.connect(this.fxBus); s.start(); lfo.start();
+    lfo.connect(lg); lg.connect(g.gain); s.connect(f); f.connect(g); g.connect(this.ambBus); s.start(); lfo.start();
   }
   listener(cam) {
     if (!this.ctx) return; const L = this.ctx.listener; const p = cam.position; const f = cam.getWorldDirection(this._f || (this._f = cam.position.clone()));

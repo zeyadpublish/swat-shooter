@@ -8,6 +8,11 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { SettingsUI, SET_DEFAULTS, GFX_PRESETS, migrateSettings } from './settings.js';
+import { Voice } from './voice.js';
 import { World, analyzeHDR } from './world.js';
 import { MAPS, MAP_BY_ID } from './maps.js';
 import { Campaign } from './campaign.js';
@@ -72,7 +77,8 @@ class HUD {
     this.slotEls = [...$('wslots').children]; this.last.sel = -1;
     for (const el of this.slotEls) el.addEventListener('mousedown', (e) => { e.stopPropagation(); this.g.player && this.g.player.switchTo(+el.dataset.i); });
   }
-  applyCrosshair() { $('crosshair').style.setProperty('--xc', this.g.settings.xhair || '#fff'); }
+  applyCrosshair() { const s = this.g.settings, c = $('crosshair'); c.style.setProperty('--xc', s.xhair || '#fff'); c.style.setProperty('--xo', s.xOp ?? 1); c.classList.toggle('nodot', s.xDot === false); c.style.scale = s.xScale ?? 1; }
+  subtitle(text) { if (!this.g.settings.subs) return; const el = $('subs'); if (!el) return; el.textContent = text; clearTimeout(this.subT); this.subT = setTimeout(() => el.textContent = '', 2600); }
   resetMatch() { this.disp = { score: 0, kills: 0, hp: 100 }; this.multi = []; this.lifeKills = 0; this.bestStreak = 0; $('streak').innerHTML = ''; $('popups').innerHTML = ''; this.feedItems = []; $('killfeed').innerHTML = ''; $('wavecard').classList.add('hidden'); }
   resetStreak() { this.lifeKills = 0; this.multi = []; }
   // the local player scored a kill: multi-kill / spree banners, +XP popup
@@ -88,7 +94,7 @@ class HUD {
     if (big) {
       const sxp = { 'DOUBLE KILL': 50, 'TRIPLE KILL': 100, 'MULTI KILL': 150, 'KILLING SPREE': 250, UNSTOPPABLE: 500, GODLIKE: 750 }[big] || 50;
       g.earn.streakXP += sxp; g.earn.streakCoins += COINS.streak; g.reward(COINS.streak, sxp);
-      $('streak').innerHTML = `<div class="sk">${big}<small>${small ? small + ' · ' : ''}+${sxp} XP</small></div>`; g.sfx.streak(Math.min(4, n >= 2 ? n - 1 : L / 5));
+      $('streak').innerHTML = `<div class="sk">${big}<small>${small ? small + ' · ' : ''}+${sxp} XP</small></div>`; g.sfx.streak(Math.min(4, n >= 2 ? n - 1 : L / 5)); g.sfx.announce(big.toLowerCase());
     }
     if (g.settings.xp) { this.popup(`<b>+100</b> KILL`); if (head) this.popup(`<b>+50</b> HEADSHOT`, true); }
   }
@@ -107,8 +113,14 @@ class HUD {
     if (this.last.deg !== Math.round(deg)) { this.last.deg = Math.round(deg); $('compstrip').style.transform = `translateX(${-(deg + 360) * 4}px)`; $('compdeg').textContent = String(Math.round(deg) % 360).padStart(3, '0'); }
   }
   damageNumber(point, dmg, head) {
-    if (!this.g.settings.dmgNum || !point) return;
+    const mode = this.g.settings.dmgNum; if (!mode || mode === 'off' || !point) return;
     const v = point.clone().project(this.g.camera); if (v.z > 1) return;
+    if (mode === 'stack') { // STACKING: one number per burst that adds up, held near the target
+      const now = this.g.time, st = this.stack; if (st && now - st.t < 0.9 && st.d.isConnected) { st.n += dmg; st.t = now; st.d.textContent = Math.round(st.n); st.d.classList.toggle('hs', head || st.d.classList.contains('hs')); clearTimeout(st.to); st.to = setTimeout(() => st.d.remove(), 900); return; }
+      const d = document.createElement('div'); d.className = 'dn stk' + (head ? ' hs' : ''); d.textContent = Math.round(dmg);
+      d.style.left = ((v.x * 0.5 + 0.5) * innerWidth + 26).toFixed(0) + 'px'; d.style.top = ((-v.y * 0.5 + 0.5) * innerHeight - 24).toFixed(0) + 'px';
+      $('nameplates').appendChild(d); this.stack = { d, n: dmg, t: now, to: setTimeout(() => d.remove(), 900) }; return;
+    }
     const d = document.createElement('div'); d.className = 'dn' + (head ? ' hs' : ''); d.textContent = Math.round(dmg);
     d.style.left = ((v.x * 0.5 + 0.5) * innerWidth + (Math.random() - 0.5) * 24).toFixed(0) + 'px'; d.style.top = ((-v.y * 0.5 + 0.5) * innerHeight - 10).toFixed(0) + 'px';
     $('nameplates').appendChild(d); setTimeout(() => d.remove(), 820);
@@ -165,7 +177,8 @@ class HUD {
     if (!this.map) this.buildMap();
     const ctx = this.radar, W = ctx.canvas.width, g = this.g, p = g.player, R = 38; // metres shown to the edge
     const k = (W / 2) / R;
-    ctx.clearRect(0, 0, W, W); ctx.save(); ctx.translate(W / 2, W / 2); ctx.rotate(p.yaw);
+    const rot = g.settings.mmRot !== false; // MINI-MAP ROTATION off = north-up map, rotating arrow
+    ctx.clearRect(0, 0, W, W); ctx.save(); ctx.translate(W / 2, W / 2); if (rot) ctx.rotate(p.yaw);
     ctx.globalAlpha = 0.85; const s = k / this.mapS;
     ctx.drawImage(this.map, (-p.pos.x - this.mapN) * k, (-p.pos.z - this.mapN) * k, this.map.width * s, this.map.height * s);
     ctx.globalAlpha = 1;
@@ -188,15 +201,15 @@ class HUD {
     }
     { const o = g.campaign && g.campaign.radarPoint(); if (o) { // campaign objective marker (gold diamond, clamped to the edge)
       let dx = (o.x - p.pos.x) * k, dz = (o.z - p.pos.z) * k; const m = Math.hypot(dx, dz), lim = W / 2 - 12; if (m > lim) { dx *= lim / m; dz *= lim / m; }
-      ctx.save(); ctx.translate(dx, dz); ctx.rotate(-p.yaw + Math.PI / 4); ctx.fillStyle = '#e4c45a'; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 3; ctx.fillRect(-9, -9, 18, 18); ctx.strokeRect(-9, -9, 18, 18); ctx.restore(); } }
+      ctx.save(); ctx.translate(dx, dz); ctx.rotate((rot ? -p.yaw : 0) + Math.PI / 4); ctx.fillStyle = '#e4c45a'; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 3; ctx.fillRect(-9, -9, 18, 18); ctx.strokeRect(-9, -9, 18, 18); ctx.restore(); } }
     for (const it of g.pickups ? g.pickups.items : []) {
       let dx = (it.pos.x - p.pos.x) * k, dz = (it.pos.z - p.pos.z) * k; const m = Math.hypot(dx, dz), lim = W / 2 - 9;
       if (m > lim) { dx *= lim / m; dz *= lim / m; }
       ctx.fillStyle = '#ffc94a'; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 2; ctx.fillRect(dx - 5, dz - 5, 10, 10); ctx.strokeRect(dx - 5, dz - 5, 10, 10);
     }
     ctx.restore();
-    // view cone + player arrow (always facing up)
-    ctx.save(); ctx.translate(W / 2, W / 2);
+    // view cone + player arrow (facing up, or turning with the player on a north-up map)
+    ctx.save(); ctx.translate(W / 2, W / 2); if (!rot) ctx.rotate(-p.yaw);
     const gr = ctx.createRadialGradient(0, 0, 0, 0, 0, W * 0.48); gr.addColorStop(0, 'rgba(255,255,255,.22)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = gr; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, W * 0.48, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#f2a33a'; ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
@@ -211,7 +224,7 @@ class HUD {
     const g = this.g, p = g.player;
     this.hmT -= dt; $('hitmarker').style.opacity = this.hmT > 0 ? Math.min(1, this.hmT * 8) : 0;
     this.bannerT -= dt; if (this.bannerT <= 0) $('banner').style.opacity = 0;
-    const gap = (p.aiming ? 3 : 6) + p.spread() * 900; const ch = $('crosshair');
+    const gap = (p.aiming ? 3 : 6) + (g.settings.xSpread === false ? 0.004 : p.spread()) * 900; const ch = $('crosshair');
     ch.style.setProperty('--g', gap.toFixed(1) + 'px'); ch.classList.toggle('ads', p.aiming);
     ch.style.opacity = p.sprint || p.dead ? 0.15 : 1;
     // ammo
@@ -271,12 +284,16 @@ class Game {
     this.canvas = $('c');
     this.mobile = MOBILE;
     let saved = {}; try { saved = JSON.parse(localStorage.getItem('swat-settings') || '{}') || {}; } catch (e) {}
-    this.settings = Object.assign({ quality: MOBILE ? 'mobile' : 'high', res: 'native', sens: 1, adsSens: 1, fov: 72, vol: 0.8, fxVol: 1, uiVol: 0.8, invert: false, fps: false, hand: 'right', btnOp: 0.85, haptics: true,
-      name: 'Operator-' + (100 + Math.random() * 900 | 0), dmgNum: false, xp: true, xhair: '#ffffff', allWeapons: false, layout: {}, primary: 'm4a1', secondary: 'pistol' }, saved);
-    const st = this.settings; st.name = cleanName(st.name) || 'Operator';
+    const fresh = !saved.gPreset;
+    this.settings = Object.assign({ quality: MOBILE ? 'mobile' : 'high', res: 'native', haptics: true,
+      name: 'Operator-' + (100 + Math.random() * 900 | 0), layout: {}, primary: 'm4a1', secondary: 'pistol' }, SET_DEFAULTS, saved);
+    const st = this.settings; st.name = cleanName(st.name) || 'Operator'; migrateSettings(st, saved);
+    // first run of v1.6: phones start on the MED preset (old 'mobile' quality), laptops on HIGH; the photo defaults are kept otherwise
+    if (fresh && saved.quality) { const m = { low: 'low', mobile: 'med', medium: 'med', high: 'high', ultra: 'ultra' }[saved.quality]; if (m) { Object.assign(st, GFX_PRESETS[m]); st.gPreset = m; } }
+    else if (fresh && MOBILE) { Object.assign(st, GFX_PRESETS.med); st.gPreset = 'med'; }
     if (!PRIMARIES.includes(st.primary)) st.primary = 'm4a1'; if (!SECONDARIES.includes(st.secondary) || st.secondary === st.primary) st.secondary = 'pistol';
     if (!localStorage.getItem('swat-settings')) localStorage.setItem('swat-settings', JSON.stringify(st));
-    if (params.get('quality')) this.settings.quality = params.get('quality');
+    if (params.get('quality')) { const q = this.settings.quality = params.get('quality'), m = { low: 'low', mobile: 'low', medium: 'med', high: 'high', ultra: 'ultra' }[q]; if (m) { Object.assign(this.settings, GFX_PRESETS[m]); this.settings.gPreset = m; } }
     if (params.get('res')) this.settings.res = params.get('res');
     if (MOBILE) { this.settings.res = 'native'; if (!QUALITY[this.settings.quality]) this.settings.quality = 'mobile'; }
     this.lite = MOBILE || this.settings.quality === 'mobile';
@@ -290,6 +307,7 @@ class Game {
     this.input = { keys: {}, fire: false, aim: false, jumpPressed: false, reloadPressed: false };
     this.sfx = new Sfx(); this.sfx.setVolume(this.settings.vol, this.settings.fxVol, this.settings.uiVol);
     this.enemies = []; this.shoulder = 1; this.aimT = 0; this.camBack = 2.6; this.pivotY = 1.6; this.fpsAcc = [];
+    this.settingsUI = new SettingsUI(this);
     this.hud = new HUD(this); this.ui = new UI(this); this.kills = 0; this.score = 0; this.wave = 0; this.waveKills = 0; this.waveTotal = 0;
     this.load();
   }
@@ -330,8 +348,10 @@ class Game {
     this.pickups = new Pickups(this); this.hud.weaponChanged(); this.hud.applyCrosshair();
     this.vehicles = new Vehicles(this);
     this.ui.progress(0.95, 'Preparing the city…');
+    this.sfx.onSubtitle = (t) => this.hud.subtitle(t.toUpperCase());
+    this.sfx.occluder = (pos) => { const c = this.camera.position, d = pos.clone().sub(c), L = d.length(); if (L < 2 || L > 60) return false; d.divideScalar(L); const h = raycastBoxes(this.world.boxes, c, d, L - 0.8); return !!h; };
     this.setupPost(); this.applySettings();
-    this.mp = new MP(this);
+    this.mp = new MP(this); this.voice = new Voice(this);
     this.campaign = new Campaign(this);
     this.meta = new Meta(this); this.bindUI(); this.bindInput(); this.resetEarn();
     this.setPlayerTint(this.opLook());
@@ -348,34 +368,94 @@ class Game {
     const room = params.get('room');
     if (room) { $('btnMP').click(); $('joinCode').value = room.toUpperCase().slice(0, 5); this.mp.join(room); }
   }
+  // v1.6 pipeline, built from the GRAPHICS tab: render (MSAA samples) -> AO -> bloom -> motion blur -> menu DOF -> output -> FXAA / SMAA
   setupPost() {
-    const q = QUALITY[this.settings.quality] || QUALITY.high;
-    const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: q.msaa });
-    const c = this.composer = new EffectComposer(this.renderer, rt);
+    const s = this.settings, r = this.renderer;
+    const msaa = s.aa === 'msaa4' ? 4 : s.aa === 'msaa2' ? 2 : 0;
+    const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: msaa });
+    const c = this.composer = new EffectComposer(r, rt);
     c.addPass(new RenderPass(this.scene, this.camera));
-    if (q.ao) {
+    if (s.ao) {
       const ao = this.ao = new GTAOPass(this.scene, this.camera, innerWidth, innerHeight);
-      ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1, thickness: 1, scale: 1.1, samples: this.settings.quality === 'ultra' ? 24 : 16, distanceFallOff: 1, screenSpaceRadius: false });
-      ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+      ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1, thickness: 1, scale: 1.1, samples: s.gPreset === 'ultra' ? 24 : MOBILE ? 8 : 16, distanceFallOff: 1, screenSpaceRadius: false });
+      ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: MOBILE ? 8 : 16 });
       ao.blendIntensity = 0.9; c.addPass(ao);
     } else this.ao = null;
-    if (q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.32, 0.55, 3.5));
+    if (s.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), s.hdr ? 0.32 : 0.2, 0.55, s.hdr ? 3.5 : 0.9));
+    this.blur = null; if (s.motionBlur) { this.blur = new AfterimagePass(0.55); c.addPass(this.blur); }
     this.dof = new ShaderPass(MenuDOF); this.dof.enabled = false; c.addPass(this.dof);
     c.addPass(new OutputPass());
+    this.fxaa = null;
+    if (s.aa === 'fxaa') { this.fxaa = new ShaderPass(FXAAShader); c.addPass(this.fxaa); }
+    else if (s.aa === 'taa') c.addPass(new SMAAPass(innerWidth, innerHeight)); // WebGL has no real TAA: SMAA stands in (morphological AA, sharper than FXAA)
+    // HDR: filmic ACES tone mapping; off = plain linear output
+    r.toneMapping = s.hdr ? THREE.ACESFilmicToneMapping : THREE.LinearToneMapping; r.toneMappingExposure = s.hdr ? 1.0 : 0.9;
   }
   pixelRatio() {
-    const q = QUALITY[this.settings.quality] || QUALITY.high, res = this.settings.res;
-    if (res === 'native') return Math.min(devicePixelRatio || 1, q.prCap);
-    return Math.min(4, parseInt(res) / innerHeight);
+    const s = this.settings, cap = MOBILE ? 1.5 : s.gPreset === 'ultra' ? 3 : s.gPreset === 'low' ? 1 : 2;
+    return Math.max(0.35, Math.min(devicePixelRatio || 1, cap) * (s.renderScale || 1) * (s.dynRes ? (this.dynScale || 1) : 1));
+  }
+  applyShadows() {
+    const s = this.settings, r = this.renderer, q = s.shadowQ, on = q !== 'off';
+    let size = { low: 1024, medium: 2048, high: 4096, realtime: 4096 }[q] || 2048; if (MOBILE) size = Math.min(size, 2048);
+    if (r.shadowMap.enabled !== on) { r.shadowMap.enabled = on; this.scene.traverse(o => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; }); }
+    this.sun.castShadow = on; this.sun.shadow.mapSize.set(size, size); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+    r.shadowMap.type = q === 'low' || MOBILE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    r.shadowMap.autoUpdate = true; this.shadowEvery = q === 'realtime' ? 1 : 2;
+  }
+  // texture quality = anisotropic filtering level (the texture files are fixed per build)
+  applyTextures() {
+    const max = this.renderer.capabilities.getMaxAnisotropy(), a = Math.min(max, { low: 1, medium: 2, high: 8, ultra: 16 }[this.settings.texQ] || 8);
+    this.scene.traverse(o => { if (!o.material) return; for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap', 'roughnessMap']) { const t = m[k]; if (t && t.anisotropy !== a) { t.anisotropy = a; const im = t.image; // not loaded yet: the loader's own upload picks the level up
+        if (im && (im.width || im.data)) t.needsUpdate = true; } } });
+  }
+  // "RAY TRACING / REFLECTIONS": WebGL has no ray tracing; this boosts the HDR environment reflections (env intensity, glossier surfaces)
+  applyReflections() {
+    const on = !!this.settings.rt, e = this.world.env;
+    if (e) this.scene.environmentIntensity = e.envI * (on ? 1.7 : 1);
+    this.scene.traverse(o => { if (!o.isMesh || !o.material || o.userData.char) return; for (const m of [].concat(o.material)) { if (m.roughness === undefined) continue; if (m.userData.r0 === undefined) m.userData.r0 = m.roughness; m.roughness = on ? m.userData.r0 * 0.6 : m.userData.r0; } });
   }
   applySettings() {
     const s = this.settings; localStorage.setItem('swat-settings', JSON.stringify(s));
-    const q = QUALITY[s.quality] || QUALITY.high;
-    this.sun.shadow.mapSize.set(q.shadow, q.shadow); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+    this.applyShadows();
     if (this.composer) { this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); }
-    this.setupPost();
-    this.sfx.setVolume(s.vol, s.fxVol, s.uiVol);
+    this.setupPost(); this.applyTextures(); this.applyReflections();
+    if (this.fx) this.fx.q = { low: 0.35, medium: 0.65, high: 1, cinematic: 1.6 }[s.fxQ] || 1;
+    this.sfx.configure(s);
+    this.hud.applyCrosshair(); this.applyGameplay();
     this.resize();
+  }
+  // one setting changed in the sheet: apply it live
+  applySetting(k) {
+    const s = this.settings, G = ['gPreset', 'aa', 'bloom', 'ao', 'hdr', 'motionBlur'];
+    if (!this.sun) return; // still loading: everything is applied once at the end of load()
+    if (G.includes(k) || k === 'gPreset') { if (k === 'gPreset') { this.applyShadows(); this.applyTextures(); this.applyReflections(); this.fx.q = { low: 0.35, medium: 0.65, high: 1, cinematic: 1.6 }[s.fxQ] || 1; }
+      this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); this.setupPost(); this.resize(); }
+    else if (k === 'shadowQ') this.applyShadows();
+    else if (k === 'texQ') this.applyTextures();
+    else if (k === 'rt') this.applyReflections();
+    else if (k === 'fxQ') this.fx.q = { low: 0.35, medium: 0.65, high: 1, cinematic: 1.6 }[s.fxQ] || 1;
+    else if (k === 'renderScale' || k === 'dynRes') { this.dynScale = 1; this.resize(); }
+    if (/^(vol|fxVol|uiVol|musicVol|dlgVol|ambVol|aPreset|dynRange|hrtf|aQ|occl|foot3d)$/.test(k)) { this.sfx.configure(s); if (k === 'uiVol') this.sfx.ui('hover'); }
+    if (/^(voip|voiceVol|micVol|micMode|micThr|muteDeath)$/.test(k) && this.voice) this.voice.configure();
+    if (/^(btnOp|ctlScale|hand|layoutPreset|joyDead)$/.test(k) && this.touch) { this.touch.applySettings(); this.ui.applyLayout(); }
+    if (k === 'gyro' && s.gyro) this.gyroPermission();
+    if (/^(xhair|xDot|xScale|xOp|xSpread)$/.test(k)) this.hud.applyCrosshair();
+    if (/^(cblind|killfeed|hmColor|hmVis|dmgSize|netStats|fps|streamer|mmRot)$/.test(k)) this.applyGameplay();
+    if (k === 'allWeapons' || k === 'name') this.ui.refreshMenu();
+    if (k === 'name' && this.mp && this.mp.onNameChange) this.mp.onNameChange();
+  }
+  applyGameplay() {
+    const s = this.settings;
+    this.canvas.style.filter = s.cblind && s.cblind !== 'off' ? `url(#cb-${s.cblind})` : '';
+    const kf = $('killfeed'); kf.classList.toggle('off', s.killfeed === 'off'); kf.classList.toggle('compact', s.killfeed === 'compact');
+    document.documentElement.style.setProperty('--hmc', s.hmColor === 'yellow' ? '#ffd21c' : '#ff3b30');
+    document.documentElement.style.setProperty('--dns', (s.dmgSize / 0.75).toFixed(2));
+    $('hitmarker').classList.toggle('off', !s.hmVis);
+    document.body.classList.toggle('streamer', !!s.streamer);
+  }
+  gyroPermission() {
+    const D = window.DeviceMotionEvent; if (D && typeof D.requestPermission === 'function' && !this.gyroAsked) { this.gyroAsked = true; D.requestPermission().catch(() => {}); }
   }
   // mobile browsers: address bar showing/hiding, rotation, entering/leaving fullscreen
   relayout() { this.resize(); if (this.touch) this.touch.layout(); }
@@ -384,7 +464,9 @@ class Game {
     this.renderer.setPixelRatio(pr); this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(pr); this.composer.setSize(w, h);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
-    $('resinfo').textContent = `Rendering at ${Math.round(w * pr)} × ${Math.round(h * pr)} px (pixel ratio ${pr.toFixed(2)})`;
+    if (this.blur) this.blur.uniforms.damp.value = 0.55;
+    if (this.fxaa) this.fxaa.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+    if (this.settingsUI) this.settingsUI.stats();
   }
   showScreen(id) { this.ui.show(id); }
   // economy: coins + XP are saved as they are earned; the match tally feeds the after-action report
@@ -393,7 +475,7 @@ class Game {
     id = MAP_BY_ID[id] ? id : 'city'; if (this.world.mapId === id) return false;
     this.world.build({ lite: this.lite, map: id });
     if (this.vehicles) this.vehicles.setSpawns(this.world.vehicleSpawns);
-    this.hud.map = null; this.applyEnv(); if (this.fx && this.fx.decals) for (const d of this.fx.decals) d.visible = false;
+    this.hud.map = null; this.applyEnv(); this.applyReflections(); this.applyTextures(); if (this.fx && this.fx.decals) for (const d of this.fx.decals) d.visible = false;
     if (this.player && this.state === 'menu') { this.player.reset(this.world.playerSpawn); this.menuPose && this.menuPose(); }
     return true;
   }
@@ -405,7 +487,7 @@ class Game {
   }
   resetEarn() { this.earn = { kills: 0, hs: 0, waves: 0, streakXP: 0, streakCoins: 0, coins: 0, xp: 0, startXP: prog().xp }; }
   reward(coins, xp) { if (!this.earn) this.resetEarn(); this.earn.coins += coins; this.earn.xp += xp; addCoins(coins); const r = addXP(xp); if (r.up) this.rankUp(r.after.lv); }
-  rankUp(lv) {
+  rankUp(lv) { this.sfx.announce('Rank up. ' + rankName(lv) + '.');
     const un = Object.entries(RANK_REQ).flatMap(([k, o]) => Object.entries(o).filter(([, v]) => v === lv).map(([id]) => k === 'gun' ? (WEAPON_BY_ID[id] || {}).name : id.toUpperCase())).filter(Boolean);
     const el = $('rankup'); el.innerHTML = `<div class="rkb">${lv}</div><div><small>RANK UP</small><b>${rankName(lv)}</b>${un.length ? `<span>UNLOCKED: ${un.join(' · ')}</span>` : ''}</div>`;
     el.classList.remove('hidden', 'go'); void el.offsetWidth; el.classList.add('go'); clearTimeout(this.rkT); this.rkT = setTimeout(() => el.classList.add('hidden'), 4200); this.sfx.ui('select');
@@ -481,11 +563,31 @@ class Game {
     document.addEventListener('visibilitychange', () => { if (document.hidden && !this.mp.active) this.pause(); });
     addEventListener('blur', () => { this.input.keys = {}; this.input.fire = this.input.aim = false; });
   }
-  haptic(p) { if (this.mobile && this.settings.haptics && !this.testMode && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) {} } }
-  look(dx, dy) {
+  // kind: fire / hit (hits you land) / dmg (damage taken) / reload / ui; scaled by the vibration intensity
+  haptic(p, kind = 'ui') {
+    const s = this.settings, v = s.vibInt ?? 0.75;
+    if (!this.mobile || this.testMode || !navigator.vibrate || v <= 0) return;
+    if ((kind === 'fire' && !s.vibFire) || ((kind === 'hit' || kind === 'dmg') && !s.vibHit) || (kind === 'reload' && !s.vibReload)) return;
+    const sc = (x) => Math.max(1, Math.round(x * v / 0.75));
+    try { navigator.vibrate(Array.isArray(p) ? p.map((x, i) => i % 2 ? x : sc(x)) : sc(p)); } catch (e) {}
+  }
+  // look input. src: 'mouse' | 'touch' | 'gyro'
+  look(dx, dy, src = 'mouse') {
     if (Math.abs(dx) + Math.abs(dy) > 0.5) this.lastLook = this.time;
-    const p = this.player, k = 0.0022 * this.settings.sens * (p.aiming ? (p.weapon.scope ? 0.22 : 0.6) * (this.settings.adsSens || 1) : 1);
-    this.player.yaw -= dx * k; this.player.pitch -= dy * k * (this.settings.invert ? -1 : 1);
+    const s = this.settings, p = this.player, W = p.weapon;
+    let m = 1;
+    if (p.vehicle) m = s.freeSens;
+    else if (p.aiming) m = !W.scope ? 0.6 * s.adsSens : this.aimT > 0.85 ? 0.22 * s.sniperSens / 0.75 : 0.6 * s.scopeSens / 0.85;
+    if (src === 'touch') {
+      const v = Math.hypot(dx, dy);
+      if (s.curveMode !== 'static' && v > 0) {
+        if (s.curve === 'standard') m *= THREE.MathUtils.clamp(Math.pow(v / 8, 0.25), 0.6, 1.4);
+        else if (s.curve === 'custom') m *= THREE.MathUtils.clamp(Math.pow(v / 8, 0.6), 0.35, 2.2);
+      }
+      if (s.aimAcc && v > 12) m *= 1 + Math.min(1, (v - 12) / 30) * 0.5 * s.aimAccMul;
+    } else if (src === 'mouse' && s.aimAcc && s.aimAccMul > 0) { const v = Math.hypot(dx, dy); if (v > 25) m *= 1 + Math.min(1, (v - 25) / 60) * 0.25 * s.aimAccMul; }
+    const k = 0.0022 * m;
+    this.player.yaw -= dx * k * s.sensX * (s.invertX ? -1 : 1); this.player.pitch -= dy * k * s.sensY * (s.invert ? -1 : 1);
     this.player.pitch = THREE.MathUtils.clamp(this.player.pitch, -1.15, 1.2);
   }
   startGame() {
@@ -546,7 +648,7 @@ class Game {
     this.waveTotal = coop ? this.mp.coopWaveSize(this.wave) : 3 + this.wave * 2;
     this.maxAlive = Math.min(coop ? 12 : 9, 3 + this.wave + (coop ? this.mp.players.size - 1 : 0));
     if (this.wave > 1) { this.player.addAmmo(2); this.player.health = Math.min(100, this.player.health + 40); }
-    this.hud.banner('WAVE ' + this.wave, `${this.waveTotal} HOSTILES INBOUND`, 3);
+    this.hud.banner('WAVE ' + this.wave, `${this.waveTotal} HOSTILES INBOUND`, 3); this.sfx.announce(`Wave ${this.wave}. ${this.waveTotal} hostiles inbound.`);
     this.waveStart = this.waveStats();
     if (coop) this.mp.onWaveStart();
   }
@@ -591,8 +693,11 @@ class Game {
     if (this.mp.active) { this.mp.onLocalDeath(); return; }
     this.gameOverT = 3.2; if (this.campaign.cur && !this.campaign.done) this.campaign.finish(false);
   }
+  // menu music: plays on the menu screens, fades out in a match
+  onScreen(id) { this.sfx.music(!!id && !this.inMatch() && this.state !== 'loading'); }
   gameOver() {
-    if (this.campaign.cur) { this.missionEnd(); return; }
+    if (this.campaign.cur) { this.sfx.announce(this.campaign.win ? 'Mission complete.' : 'Mission failed.'); this.missionEnd(); return; }
+    this.sfx.announce('Operation over.');
     this.state = 'gameover'; this.input.fire = this.input.aim = false;
     if (document.pointerLockElement) document.exitPointerLock();
     const p = this.player; const acc = p.shots ? Math.round(p.hits / p.shots * 100) : 0, secs = Math.round(this.time - (this.startT || 0));
@@ -637,7 +742,7 @@ class Game {
       else if (alive === 0) {
         if (this.intermission <= 0 && C && C.onWaveCleared()) { this.intermission = 0; if (!this.player.dead) { this.earn.waves++; this.reward(COINS.wave, 150); } }
         else if (this.intermission <= 0) {
-          this.intermission = 6; this.hud.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH', 3); if (!this.player.dead) { this.earn.waves++; this.reward(COINS.wave, 150); } this.mp.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH');
+          this.intermission = 6; this.hud.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH', 3); this.sfx.announce('Wave cleared.'); if (!this.player.dead) { this.earn.waves++; this.reward(COINS.wave, 150); } this.mp.banner('WAVE CLEARED', 'RESUPPLY: +AMMO +HEALTH');
           const a = this.waveStart || {}, b = this.waveStats(), sh = b.shots - (a.shots || 0);
           this.hud.waveCard({ wave: this.wave, kills: b.kills - (a.kills || 0), hs: b.hs - (a.hs || 0), acc: sh ? Math.round((b.hits - (a.hits || 0)) / sh * 100) : 0, score: b.score - (a.score || 0) });
         }
@@ -696,9 +801,10 @@ class Game {
     cam.position.copy(shoulder).addScaledVector(dir, -this.camBack);
     if (cam.position.y < 0.2) cam.position.y = 0.2;
     cam.rotation.set(pitch, yaw, 0, 'YXZ');
-    if (this.shake > 0) { cam.rotation.x += (Math.random() - 0.5) * this.shake * 0.004; cam.rotation.y += (Math.random() - 0.5) * this.shake * 0.004; this.shake = Math.max(0, this.shake - dt * 6); }
+    if (this.shake > 0) { const a = this.settings.shakeAmt * 2; cam.rotation.x += (Math.random() - 0.5) * this.shake * 0.004 * a; cam.rotation.y += (Math.random() - 0.5) * this.shake * 0.004 * a; this.shake = Math.max(0, this.shake - dt * 6); }
     const W = p.weapon, scoped = !!W.scope && !p.switching && p.reloading <= 0;
-    const fov = scoped && this.aimT > 0.85 ? W.scopeFov : this.settings.fov - W.zoom * this.aimT + (p.sprint ? 6 : 0);
+    const S = this.settings, hip = S.fov, ads = THREE.MathUtils.lerp(hip, S.fpFov, this.aimT) - W.zoom * this.aimT * S.adsFov;
+    const fov = scoped && this.aimT > 0.85 ? W.scopeFov / Math.max(0.5, S.adsFov) * 0.85 : ads + (p.sprint ? 6 : 0);
     if (scoped && this.aimT > 0.85) cam.fov = fov; // snap into the scope
     cam.fov += (fov - cam.fov) * Math.min(1, dt * 10); cam.updateProjectionMatrix();
     // hide the player model if the camera is inside it
@@ -708,6 +814,8 @@ class Game {
   sim(sec, dt = 1 / 60) { for (let t = 0; t < sec; t += dt) { if (this.state === 'playing' || this.state === 'gameover') this.updateGame(dt); this.updateCamera(dt); this.fx.update(dt); if (this.state === 'playing') this.hud.update(dt); } }
   renderOnce() { this.updateCamera(0.016); this.sfx.listener(this.camera); if (this.state === 'playing' || this.state === 'paused') this.hud.update(0.001); this.composer.render(0.016); }
   frame() {
+    const cap = this.settings.fpsCap, now = performance.now();
+    if (cap !== 'max' && !this.testMode) { const iv = 1000 / +cap; if (now - (this.lastFrame || 0) < iv - 2) return; this.lastFrame = now; }
     const dt = Math.min(0.05, this.clock.getDelta());
     if (this.testMode && this.fixedDt) { this.step(this.fixedDt); } else this.step(dt);
   }
@@ -729,11 +837,23 @@ class Game {
       const on = this.state === 'menu' && !MOBILE; this.dof.enabled = on;
       if (on) { const u = this.dof.uniforms; u.aspect.value = innerWidth / innerHeight; u.px.value.set(1 / innerWidth, 1 / innerHeight); u.focus.value.set(innerWidth > innerHeight * 1.15 ? 0.67 : 0.5, 0.48); }
     }
+    this.frameN = (this.frameN || 0) + 1;
+    this.renderer.shadowMap.autoUpdate = (this.shadowEvery || 1) === 1 || this.frameN % 2 === 0 || this.state !== 'playing';
     if (render && !this.ui.renderPreview(dt)) this.composer.render(dt);
     // fps
     this.fpsAcc.push(dt); if (this.fpsAcc.length > 30) this.fpsAcc.shift();
-    if (this.settings.fps) { const f = 1 / (this.fpsAcc.reduce((a, b) => a + b, 0) / this.fpsAcc.length); const s = this.renderer.getDrawingBufferSize(new THREE.Vector2()); $('fps').textContent = `${f.toFixed(0)} fps  ${s.x}x${s.y}  ${this.settings.quality}`; }
-    else $('fps').textContent = '';
+    const S = this.settings, f = 1 / (this.fpsAcc.reduce((a, b) => a + b, 0) / this.fpsAcc.length);
+    // dynamic resolution: drop the render scale when below ~50 fps, raise it again above ~58 (or the cap)
+    if (S.dynRes && render && !this.testMode) { this.dynT = (this.dynT || 0) + dt; if (this.dynT > 1.5) { this.dynT = 0; const tgt = Math.min(57, S.fpsCap === 'max' ? 57 : +S.fpsCap - 3), d = this.dynScale || 1;
+      const n = f < tgt - 8 ? Math.max(0.5, d - 0.1) : f > tgt && d < 1 ? Math.min(1, d + 0.05) : d; if (n !== d) { this.dynScale = n; this.resize(); } } }
+    this.fpsTxT = (this.fpsTxT || 0) - dt;
+    if (this.fpsTxT <= 0) { this.fpsTxT = 0.25;
+      const ns = S.netStats, mp = this.mp && this.mp.active, parts = [];
+      if (S.fps || (ns !== 'off' && this.inMatch())) parts.push(`${f.toFixed(0)} FPS`);
+      if (mp && ns !== 'off' && this.mp.pingMs != null) parts.push(`${Math.round(this.mp.pingMs)} MS`);
+      if (S.fps || ns === 'all') { const b = this.renderer.getDrawingBufferSize(new THREE.Vector2()); parts.push(`${b.x}x${b.y}`); if (ns === 'all' || S.fps) parts.push(`${this.renderer.info.render.calls} DRAWS`); if (ns === 'all' && mp) parts.push(`${this.mp.peers ? this.mp.peers.size || 0 : 0} PEERS`); }
+      $('fps').textContent = parts.join('  ');
+    }
   }
 }
 

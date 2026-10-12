@@ -29,7 +29,7 @@ export class Meta {
   go(id) { if (this.g.ui.cur === id) return; if (this.g.ui.cur === 'loadout') this.g.ui.closeLoadout(); this.g.ui.show(id, false); this.g.ui.stack = id === 'menu' ? [] : ['menu']; }
   // called by UI.show for every screen change
   onShow(id) {
-    const front = TABS.includes(id) && !this.g.inMatch();
+    const front = TABS.includes(id) && id !== 'settings' && !this.g.inMatch(); // v1.6: SETTINGS is a full-screen sheet with its own back button
     const bar = front || ['mpmenu', 'lobby', 'maps', 'campaign', 'briefing'].includes(id) && !this.g.inMatch();
     $('topbar').classList.toggle('hidden', !bar); $('hintbar').classList.toggle('hidden', !bar);
     document.body.classList.toggle('front', bar);

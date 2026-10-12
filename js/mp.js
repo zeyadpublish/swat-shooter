@@ -100,7 +100,10 @@ export class MP {
   get me() { return this.players.get(this.myId); }
   get inLobby() { return !!this.role && !this.active; }
   tintFor(p) { const id = p.id | 0; if (!p.bot && OPS.has(p.op) && !(this.mode === 'tdm' && p.team === 1)) return p.op === 'swat' && this.mode === 'tdm' ? 'swat_blue' : p.op; if (this.mode === 'tdm') { const L = TEAM_LOOKS[p.team || 0]; return L[id % L.length]; } return FFA_LOOKS[id % FFA_LOOKS.length]; } // appearance (look key)
-  name(id) { const p = this.players.get(id); return p ? p.name : '?'; }
+  name(id) { const p = this.players.get(id); return p ? this.dn(p) : '?'; }
+  // display name: STREAMER MODE hides other humans' names
+  dn(p) { if (!p) return '?'; if (!this.g.settings.streamer || p.bot || p.id === this.myId) return p.name; return 'PLAYER ' + (p.id + 1); }
+  onNameChange() { const v = this.g.settings.name; if ($('mpName')) $('mpName').value = v; }
 
   // ------------------------------------------------------------------ UI: multiplayer menu + lobby
   bindUI() {
@@ -202,7 +205,7 @@ export class MP {
       const np = this.newPlayer(this.nextId++, this.uniqueName(m.name), cnt[1] < cnt[0] ? 1 : 0, pid);
       if (OPS.has(m.op)) np.op = m.op; this.players.set(np.id, np);
       this.net.send(pid, { t: 'welcome', id: np.id, code: this.code });
-      this.sysChat(`${np.name} joined`);
+      this.sysChat(`${this.dn(np)} joined`);
       if (this.active) { // joining a match in progress
         np.dead = true; np.respawnAt = now() + 1; this.addRemote(np); this.net.send(pid, this.startMsg(false)); this.broadcastRoster();
       } else this.broadcastLobby();
@@ -233,7 +236,7 @@ export class MP {
   }
   playerLeft(pid) {
     const p = [...this.players.values()].find(q => q.pid === pid); if (!p) return;
-    this.players.delete(p.id); this.removeRemote(p.id); this.sysChat(`${p.name} left`);
+    this.players.delete(p.id); this.removeRemote(p.id); this.sysChat(`${this.dn(p)} left`);
     if (this.active) { this.broadcastRoster(); this.checkCoopWipe(); } else this.broadcastLobby();
   }
   broadcastLobby() {
@@ -299,7 +302,7 @@ export class MP {
     $('lbBots').value = String(this.botCount); $('lbDiff').value = this.botDiff;
     const nBots = this.mode === 'coop' ? 0 : Math.min(this.botCount, MAX_PLAYERS - pl.length), DN = { easy: 'RECRUIT', normal: 'REGULAR', hard: 'VETERAN' }[this.botDiff] || '';
     let bk = 0; const botRow = (n) => Array.from({ length: n }, () => `<div class="lp bot"><span class="nm"><i class="ai">AI</i>Bot ${++bk}</span><span class="tag">${DN}</span></div>`).join('');
-    const row = (p) => `<div class="lp ${this.mode === 'tdm' ? TEAM_CLS[p.team] : ''}${p.id === this.myId ? ' me' : ''}"><span class="nm">${esc(p.name)}</span>${p.id === 0 ? '<span class="tag hs">HOST</span>' : p.ready ? '<span class="tag rd">READY</span>' : '<span class="tag">NOT READY</span>'}</div>`;
+    const row = (p) => `<div class="lp ${this.mode === 'tdm' ? TEAM_CLS[p.team] : ''}${p.id === this.myId ? ' me' : ''}"><span class="nm">${esc(this.dn(p))}</span>${p.id === 0 ? '<span class="tag hs">HOST</span>' : p.ready ? '<span class="tag rd">READY</span>' : '<span class="tag">NOT READY</span>'}</div>`;
     const el = $('lobbyPlayers');
     if (this.mode === 'tdm') { el.classList.remove('single'); const split = this.botSplit(pl, nBots); el.innerHTML = [0, 1].map(t => `<div class="lteam ${TEAM_CLS[t]}"><h4>${TEAM_NAME[t]} TEAM</h4>${pl.filter(p => p.team === t).map(row).join('')}${botRow(split[t])}</div>`).join(''); }
     else { el.classList.add('single'); el.innerHTML = `<div class="lteam"><h4>${MODE_NAME[this.mode]} · ${pl.length + nBots}/${MAX_PLAYERS}</h4>${pl.map(row).join('')}${botRow(nBots)}</div>`; }
@@ -434,7 +437,7 @@ export class MP {
   updateBar() {
     const me = this.me; if (!me) return; const ps = [...this.players.values()];
     if (this.mode === 'tdm') { $('scoreA').textContent = this.teamScore[0]; $('scoreB').textContent = this.teamScore[1]; $('nameA').textContent = me.team === 0 ? 'BLUE · YOU' : 'BLUE'; $('nameB').textContent = me.team === 1 ? 'RED · YOU' : 'RED'; }
-    else if (this.mode === 'ffa') { const lead = ps.filter(p => p !== me).sort((a, b) => b.k - a.k)[0]; $('scoreA').textContent = me.k; $('nameA').textContent = 'YOU'; $('scoreB').textContent = lead ? lead.k : 0; $('nameB').textContent = lead ? esc(lead.name).slice(0, 10).toUpperCase() : 'LEADER'; }
+    else if (this.mode === 'ffa') { const lead = ps.filter(p => p !== me).sort((a, b) => b.k - a.k)[0]; $('scoreA').textContent = me.k; $('nameA').textContent = 'YOU'; $('scoreB').textContent = lead ? lead.k : 0; $('nameB').textContent = lead ? esc(this.dn(lead)).slice(0, 10).toUpperCase() : 'LEADER'; }
     else { $('scoreA').textContent = this.g.wave || 1; $('nameA').textContent = 'WAVE'; $('scoreB').textContent = ps.filter(p => !p.dead).length; $('nameB').textContent = 'ALIVE'; }
     const tl = this.mode === 'coop' ? null : Math.max(0, Math.round(this.timeLeft));
     $('mptimer').textContent = tl == null ? 'CO-OP' : `${(tl / 60) | 0}:${String(tl % 60).padStart(2, '0')}`; $('mptimer').classList.toggle('low', tl != null && tl <= 30);
@@ -480,7 +483,7 @@ export class MP {
       for (const [tg, h] of hits) {
         if (tg.isPlayer) {
           const dealt = this.applyDamage(tg.id, h.dmg, this.myId, g.player.pos.clone(), h.head, W.id);
-          if (dealt > 0) { const kill = tg.dead; g.hud.hitmarker(h.head, kill); g.sfx.hit(h.head); g.hud.damageNumber(h.point, dealt, h.head); me.hits++; if (h.head) me.hs++; }
+          if (dealt > 0) { const kill = tg.dead; g.hud.hitmarker(h.head, kill); g.sfx.hit(h.head, kill); g.hud.damageNumber(h.point, dealt, h.head); me.hits++; if (h.head) me.hs++; }
         } else if (!tg.dead) { // co-op enemy
           g.lastAttacker = this.myId; tg.damage(h.dmg, h.dir, h.head); g.hud.hitmarker(h.head, tg.dead); g.sfx.hit(h.head); g.hud.damageNumber(h.point, h.dmg, h.head); me.hits++;
         }
@@ -602,13 +605,13 @@ export class MP {
     if (kp && m.ks) [kp.k, kp.d, kp.s] = m.ks; if (vp && m.vs) { [vp.k, vp.d, vp.s] = m.vs; vp.dead = true; }
     if (m.sc) this.teamScore = m.sc;
     const cls = (p) => !p ? 'foe' : this.mode === 'tdm' ? TEAM_CLS[p.team] : p.id === me ? 'you' : 'ffa';
-    const nm = (p, fb) => p ? (p.id === me ? 'YOU' : esc(p.name)) : fb;
+    const nm = (p, fb) => p ? (p.id === me ? 'YOU' : esc(this.dn(p))) : fb;
     g.hud.feed(`<span class="${cls(kp)}">${nm(kp, 'HOSTILE')}</span>`, m.w, !!m.h, `<span class="${m.e ? 'foe' : cls(vp)}">${m.e ? 'HOSTILE' : nm(vp, '?')}</span>`, m.k === me ? m.pts : 0);
     if (m.k === me && m.pts) { g.hud.onLocalKill(m.pts, !!m.h); this.lifeKills = (this.lifeKills || 0) + 1; }
     if (m.v === me) {
       this.lifeKills = 0; g.hud.resetStreak();
       if (!g.player.dead) g.player.damage(9999, kp ? (this.posOf(kp.id) || g.player.pos).clone() : g.player.pos.clone());
-      $('killedby').textContent = kp ? kp.name : 'HOSTILES'; this.respawnT = this.mode === 'coop' ? 0 : RESPAWN;
+      $('killedby').textContent = kp ? this.dn(kp) : 'HOSTILES'; this.respawnT = this.mode === 'coop' ? 0 : RESPAWN;
       $('respawn').querySelector('div').classList.toggle('hidden', this.mode === 'coop');
       $('respawn').querySelector('small').textContent = this.mode === 'coop' ? 'YOU ARE DOWN · RESPAWN NEXT WAVE · KILLED BY' : 'YOU WERE ELIMINATED BY';
       $('respawn').classList.remove('hidden');
@@ -716,7 +719,7 @@ export class MP {
       el.style.display = '';
       const cls = 'np ' + (this.mode === 'tdm' ? TEAM_CLS[p.team] : this.mode === 'coop' ? 'blue' : 'ffa') + (p.prot > now() ? ' prot' : '');
       if (el.className !== cls) el.className = cls;
-      const html = `${esc(p.name)}<i><b style="width:${Math.max(0, Math.min(100, p.hp | 0))}%"></b></i>`;
+      const html = `${esc(this.dn(p))}<i><b style="width:${Math.max(0, Math.min(100, p.hp | 0))}%"></b></i>`;
       if (el._h !== html) { el.innerHTML = html; el._h = html; }
       el.style.transform = `translate(${((v.x * 0.5 + 0.5) * w).toFixed(1)}px, ${((-v.y * 0.5 + 0.5) * h).toFixed(1)}px) translate(-50%, -100%) scale(${Math.max(0.7, Math.min(1, 14 / dist)).toFixed(2)})`;
     }
@@ -732,7 +735,7 @@ export class MP {
   toggleBoard(on) { const el = $('scoreboard'); const show = on == null ? el.classList.contains('hidden') : on; el.classList.toggle('hidden', !show); if (show) this.renderBoard(); }
   renderBoard() {
     const ps = [...this.players.values()].sort((a, b) => b.s - a.s || b.k - a.k), me = this.myId;
-    const table = (list, cap, cls) => `<table class="${cls || ''}">${cap ? `<caption>${cap}</caption>` : ''}<tr><th>PLAYER</th><th>K</th><th>D</th><th>SCORE</th><th>PING</th></tr>${list.map(p => `<tr class="${p.id === me ? 'me' : ''}${p.dead ? ' dead' : ''}"><td>${esc(p.name)}${p.id === 0 ? ' ★' : ''}</td><td>${p.k}</td><td>${p.d}</td><td>${p.s}</td><td>${p.id === 0 ? '–' : p.ping | 0}</td></tr>`).join('')}</table>`;
+    const table = (list, cap, cls) => `<table class="${cls || ''}">${cap ? `<caption>${cap}</caption>` : ''}<tr><th>PLAYER</th><th>K</th><th>D</th><th>SCORE</th><th>PING</th></tr>${list.map(p => `<tr class="${p.id === me ? 'me' : ''}${p.dead ? ' dead' : ''}"><td>${esc(this.dn(p))}${p.id === 0 ? ' ★' : ''}</td><td>${p.k}</td><td>${p.d}</td><td>${p.s}</td><td>${p.id === 0 ? '–' : p.ping | 0}</td></tr>`).join('')}</table>`;
     const tl = Math.round(this.timeLeft), head = `<h2>${MODE_NAME[this.mode]}<small>${this.mode === 'coop' ? 'WAVE ' + (this.g.wave || 1) : `${(tl / 60) | 0}:${String(tl % 60).padStart(2, '0')} · LIMIT ${this.lim.score}`} · ROOM ${this.code}</small></h2>`;
     $('scoreboard').innerHTML = head + (this.mode === 'tdm'
       ? `<div class="sbcols">${[0, 1].map(t => table(ps.filter(p => p.team === t), `${TEAM_NAME[t]} · ${this.teamScore[t]}`, TEAM_CLS[t])).join('')}</div>`
@@ -750,7 +753,7 @@ export class MP {
   addChat(id, text, sys) {
     const log = $('chatlog'), d = document.createElement('div'), p = this.players.get(id);
     if (sys) { d.className = 'sys'; d.textContent = text; }
-    else { d.className = this.mode === 'tdm' && p ? TEAM_CLS[p.team] : 'ffa'; const b = document.createElement('b'); b.textContent = (p ? p.name : '?') + ':'; d.appendChild(b); d.appendChild(document.createTextNode(' ' + text)); }
+    else { d.className = this.mode === 'tdm' && p ? TEAM_CLS[p.team] : 'ffa'; const b = document.createElement('b'); b.textContent = (p ? this.dn(p) : '?') + ':'; d.appendChild(b); d.appendChild(document.createTextNode(' ' + text)); }
     log.appendChild(d); while (log.children.length > 5) log.firstChild.remove();
     setTimeout(() => d.classList.add('fade'), 8000); setTimeout(() => d.remove(), 9000);
     if (!sys) this.g.sfx.ui('notify');

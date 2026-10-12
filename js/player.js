@@ -65,13 +65,17 @@ export class Player {
     const j = inp.joy;
     if (j && j.active && !f && !s) {
       const m = Math.hypot(j.x, j.y);
-      if (m > 0.18) { f = -j.y; s = j.x; slow = m < 0.62; }
+      if (m > (g.settings.joyDead ?? 0.18)) { f = -j.y; s = j.x; slow = m < 0.62; }
     }
     this.moving = !!(f || s);
     this.crouch = (this.crouchToggle || !!k.ControlLeft || !!k.ControlRight) && this.grounded;
     if (inp.medkitPressed) { inp.medkitPressed = false; this.useMedkit(); }
     this.aiming = !!inp.aim;
-    this.sprint = !!(k.ShiftLeft || k.ShiftRight || inp.sprintToggle || inp.sprintLock) && this.moving && !slow && !this.aiming && !this.crouch && !inp.fire;
+    // AUTO-SPRINT: auto = stick pushed fully forward / W held for 1.2 s; tap = the sprint button and stick lock; off = no stick lock
+    const as = g.settings.autoSprint || 'tap';
+    this.wHeld = k.KeyW && !k.KeyS ? (this.wHeld || 0) + dt : 0;
+    const autoRun = as === 'auto' && ((j && j.active && -j.y > 0.93) || this.wHeld > 1.2);
+    this.sprint = !!(k.ShiftLeft || k.ShiftRight || inp.sprintToggle || (as !== 'off' && inp.sprintLock) || autoRun) && this.moving && !slow && !this.aiming && !this.crouch && !inp.fire;
     const gait = this.crouch ? 'crouch' : (this.aiming || slow) ? 'walk' : this.sprint ? 'sprint' : 'run';
     const speed = GAIT_SPEED[gait] * (gait === 'crouch' ? 0.85 : 1) * (0.9 + 0.1 * (this.weapon.mob ?? 1));
     // ---- horizontal movement
@@ -86,6 +90,13 @@ export class Player {
     if (inp.jumpPressed && this.grounded && this.landTimer < 0.2) {
       if (this.crouchToggle) this.crouchToggle = false;
       else { this.vel.y = 5.2; this.grounded = false; this.jumpPhase = 'up'; this.airTime = 0; this.c.play('jump up', { fade: 0.1, once: true }); g.sfx.step(null, 0.2); }
+    }
+    // LEDGE GRAB: jumping into a ledge up to ~2 m above the feet pulls the operator up onto it
+    if (g.settings.ledge && !this.grounded && this.moving && this.vel.y < 2.5 && this.airTime < 0.9) {
+      const fw = fwdVec(this.yaw), px = this.pos.x + fw.x * (this.radius + 0.35), pz = this.pos.z + fw.z * (this.radius + 0.35);
+      for (const b of g.world.boxes) { const top = b.max.y - this.pos.y;
+        if (top > 0.5 && top < 2.1 && px > b.min.x && px < b.max.x && pz > b.min.z && pz < b.max.z && b.max.x - b.min.x > 0.5 && b.max.z - b.min.z > 0.5) {
+          this.pos.set(px, b.max.y + 0.02, pz); this.vel.set(0, 0, 0); this.grounded = true; this.jumpPhase = null; this.landTimer = 0.3; this.c.play('jump down', { fade: 0.08, once: true }); g.sfx.step(null, 0.25); break; } }
     }
     inp.jumpPressed = false;
     const ground = groundHeight(g.world.boxes, this.pos, this.radius, this.grounded ? 0.45 : 0.05);
@@ -170,8 +181,9 @@ export class Player {
       if (this.healT <= 0) { this.healT = 0; this.c.showMedkit(false); }
     }
     if (inp.fire && this.reloading <= 0 && this.cool <= 0 && !this.switching && this.healT <= 0 && (W.auto || this.triggerUp)) {
-      if (this.mag > 0) { this.shoot(); this.triggerUp = false; }
-      else if (!this.emptyClicked) { g.sfx.empty(); this.emptyClicked = true; this.startReload(); }
+      if (this.mag > 0) { this.shoot(); this.triggerUp = false; if (this.mag <= 0 && g.settings.autoReload !== false) this.startReload(); }
+      else if (!this.emptyClicked) { g.sfx.empty(); this.emptyClicked = true;
+        if (this.reserve <= 0 && g.settings.autoSwitch !== false && this.slots.length > 1) this.cycle(1); else if (g.settings.autoReload !== false) this.startReload(); }
     }
     if (!inp.fire) this.emptyClicked = false;
     // recoil recovery
@@ -209,7 +221,7 @@ export class Player {
   startReload() {
     const W = this.weapon;
     if (this.reloading > 0 || this.switching || this.healT > 0 || this.mag >= W.mag || this.reserve <= 0) return;
-    this.reloading = W.reload; this.g.sfx.reload(W.reload / 2.1);
+    this.reloading = W.reload; this.g.sfx.reload(W.reload / 2.1); this.g.haptic([12, 60, 18], 'reload');
   }
   spread() {
     const W = this.weapon, hs = Math.hypot(this.vel.x, this.vel.z);
@@ -280,24 +292,24 @@ export class Player {
     g.shake = Math.min(1.6, g.shake + 0.25 * Math.max(1, W.recoil / 0.011) ** 0.6);
     g.fx.muzzleFlash(this.c.muzzle, firstMd, true, W.flash);
     if (W.pump) { this.pumpT = 0.45; setTimeout(() => g.fx.shell(this.c), 380); } else g.fx.shell(this.c);
-    g.sfx.gunshot(null, 1, W.sound); g.haptic(W.pellets > 1 || W.scope ? 30 : 9);
+    g.sfx.gunshot(null, 1, W.sound); g.haptic(W.pellets > 1 || W.scope ? 30 : 9, 'fire');
     g.alert(this.pos, W.sound === 'pistol' ? 32 : 45);
     if (g.mp && g.mp.active) { // multiplayer: the host decides what the bullets did
       for (const [, h] of hits) { this.hits++; if (h.head) this.headshots++; }
-      if (hits.size) g.haptic(18);
+      if (hits.size) g.haptic(18, 'hit');
       g.mp.localShot(W, this.lastO, muzzle, ends, hits, pellets); return;
     }
     for (const [e, h] of hits) {
       this.hits++; if (h.head) this.headshots++;
       g.hud.damageNumber(h.point, h.dmg, h.head);
       e.damage(h.dmg, h.dir, h.head);
-      g.hud.hitmarker(h.head, e.dead); g.sfx.hit(h.head); g.haptic(e.dead ? [30, 40, 50] : 18); anyHit = true;
+      g.hud.hitmarker(h.head, e.dead); g.sfx.hit(h.head, e.dead); g.haptic(e.dead ? [30, 40, 50] : 18, 'hit'); anyHit = true;
     }
   }
   damage(amount, fromPos) {
     if (this.dead) return;
     this.health -= amount; this.lastHurt = this.g.time; this.g.sfx.hurt();
-    this.g.hud.damageFrom(fromPos); this.g.haptic(45);
+    this.g.hud.damageFrom(fromPos); this.g.haptic(45, 'dmg');
     if (this.health <= 0) {
       this.health = 0; this.dead = true; this.deadTime = 0;
       const toShooter = fromPos.clone().sub(this.pos).setY(0).normalize();

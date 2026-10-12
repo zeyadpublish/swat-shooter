@@ -2,6 +2,42 @@
 
 A third-person shooter that runs in the browser. It's built with Three.js (r170, included in this folder) around your SWAT soldier (`Swat.fbx`) and its 49 Mixamo animations.
 
+## v1.6 settings
+
+Settings is a full-screen sheet with four tabs (GRAPHICS / CONTROLS / AUDIO / GAMEPLAY), built in `js/settings.js`.
+Everything is saved in localStorage (`swat-settings`) and applied as soon as you change it.
+
+- **Graphics**
+  - Presets and an FPS cap.
+  - Render scale, plus dynamic resolution that adjusts to the frame rate.
+  - Hip FOV, 1st-person (ADS) FOV and ADS zoom scale.
+  - Motion blur (afterimage pass).
+  - Texture quality (sets anisotropic filtering).
+  - Shadows: off, 1024, 2048 or 4096. Real-time updates them every frame; the other levels update every 2nd frame.
+  - AA: FXAA, MSAA 2x/4x, or "TAA", which uses SMAA (WebGL has no TAA).
+  - Particle quality, bloom, GTAO and HDR (ACES or linear output).
+  - "Ray tracing" does not do real ray tracing (WebGL has none). It boosts environment reflections instead.
+- **Controls**
+  - Separate X/Y look sensitivity, plus ADS, scope, sniper and vehicle free-look multipliers.
+  - Response curves for touch look, and aim acceleration.
+  - Invert X/Y, and gyro aim while aiming down sights (with its own invert and sensitivity).
+  - Button opacity and size, left/right hand.
+  - Layouts A, B, Custom 1 and Custom 2. An edit made with CUSTOMIZE HUD LAYOUT is saved to the custom slot.
+  - Joystick deadzone: tap the calibration grid to set it.
+  - Vibration intensity and per-event toggles.
+- **Audio**
+  - Volumes for master, effects, UI, music (a procedural menu pad), dialogue and ambience.
+  - Presets, dynamic range (compressor), HRTF or equal-power panning, and reverb quality.
+  - Sound occlusion: a wall between you and a sound muffles it.
+  - Announcer lines use speech synthesis, with optional subtitles.
+- **Voice chat** uses PeerJS audio calls, with push-to-talk on B or the TALK button, open mic with a threshold, or muted. It needs the online PeerJS transport and is not available on the local test relay.
+- **Gameplay**
+  - Streamer mode, network stats, kill feed, and north-up minimap.
+  - Damage numbers (floating or stacking, with size), hitmarker visuals, sound and colour.
+  - Colorblind filters and screen shake.
+  - Crosshair colour, dot, spread, scale and opacity.
+  - Auto reload, auto switch, auto sprint, and ledge grab.
+
 ## How to run
 Browsers block ES modules on `file://`, so you need to serve this folder over HTTP. The included launchers do this for you:
 

@@ -29,7 +29,17 @@ export class TouchControls {
     document.body.classList.add('mobile');
     this.ts = 1; this.layout();
     this.applySettings();
-    this.bind();
+    this.bind(); this.bindGyro();
+  }
+  // GYROSCOPE INPUT: while aiming down sights, tilting the phone fine-tunes the aim (rotation rate in deg/s)
+  bindGyro() {
+    addEventListener('devicemotion', (e) => {
+      const g = this.g, s = g.settings, r = e.rotationRate; if (!s.gyro || !r || g.state !== 'playing' || !g.player || !g.player.aiming) return;
+      const dt = Math.min(0.05, (e.interval > 1 ? e.interval / 1000 : e.interval) || 0.016), land = Math.abs(screen.orientation ? screen.orientation.angle : window.orientation || 90) === 90 ? 1 : -1;
+      const inv = s.gyroInv ? -1 : 1, k = 12 * (s.gyroSens || 1) * dt;
+      // landscape: turning the phone left/right is the beta axis, tilting it toward / away is gamma
+      g.look(-(r.beta || 0) * k * inv * land, -(r.gamma || 0) * k * inv * land * 0.8, 'gyro');
+    });
   }
   applySettings() {
     const s = this.g.settings;
@@ -185,7 +195,7 @@ export class TouchControls {
     for (const t of e.changedTouches) {
       const l = this.lookIds.get(t.identifier); if (!l) continue;
       const dx = t.clientX - l.x, dy = t.clientY - l.y; l.x = t.clientX; l.y = t.clientY;
-      if (this.g.state === 'playing') this.g.look(dx * 1.6, dy * 1.6);
+      if (this.g.state === 'playing') this.g.look(dx * 1.6, dy * 1.6, 'touch');
     }
   }
   onMove(e) {
